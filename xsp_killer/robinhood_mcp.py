@@ -14,11 +14,11 @@ Invariants:
   position/monitor decisions.
 - No live orders without operator GO (I7): ``place_option_order`` requires a
   pinned account plus ``XSP_LANE_A_LIVE_ENTRIES`` for opens (buy-to-open) and
-  ``XSP_LANE_A_LIVE_EXITS`` for closes (sell-to-close); ambiguous effect
-  defaults to exit-semantics.
+  ``XSP_LANE_A_LIVE_EXITS`` for closes (sell-to-close); every leg must set
+  ``position_effect`` to exactly ``open`` or ``close`` (unknown/empty denied).
 - I8 kill switch: ``kill_switch_engaged`` (``XSP_LANE_A_KILL_SWITCH`` or a
   sentinel file) blocks all ``place_option_order`` regardless of live-exits;
-  cancels are never blocked.
+  cancels are never blocked. IO failure reading the kill file fails closed.
 """
 
 from __future__ import annotations
@@ -125,6 +125,7 @@ def kill_switch_engaged() -> bool:
 
     Blocks all new order placement regardless of ``XSP_LANE_A_LIVE_EXITS``.
     Cancels are never blocked so open orders can always be pulled.
+    IO failure while checking the sentinel file fails closed (blocks placement).
     """
     if os.getenv("XSP_LANE_A_KILL_SWITCH", "").strip().lower() in (
         "1",
@@ -139,7 +140,11 @@ def kill_switch_engaged() -> bool:
     try:
         return Path(kill_file).exists()
     except OSError:
-        return False
+        logger.warning(
+            "kill switch file check failed (%s) — fail-closed (blocking place)",
+            kill_file,
+        )
+        return True
 
 
 def rh_mcp_enabled() -> bool:
@@ -287,7 +292,12 @@ def normalize_mcp_position(row: dict[str, Any]) -> dict[str, Any]:
     avg = (
         row.get("average_price") or row.get("average_open_price") or row.get("avg_cost")
     )
-    mark = row.get("mark_price") or row.get("adjusted_mark_price") or row.get("mark")
+    # Preserve mark_price=0.0 (do not use falsy ``or`` — zero is a valid mark).
+    mark = None
+    for key in ("mark_price", "adjusted_mark_price", "mark"):
+        if key in row and row[key] is not None:
+            mark = row[key]
+            break
     oid = row.get("option_id") or row.get("id") or row.get("instrument_id")
     out = dict(row)
     out.update(
@@ -351,6 +361,48 @@ def _review_grant_key(order: dict[str, Any]) -> str:
     }
     payload = {k: v for k, v in payload.items() if v not in (None, [], "")}
     return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _review_outcome_approved(result: Any) -> tuple[bool, str]:
+    """Return (approved, reason) for a ``review_option_order`` business outcome.
+
+    Fail closed unless the result is a dict with no rejection/warning/error
+    signals and no failing ``order_checks`` entries. Transport success alone
+    does not authorize a place grant (HCP I2).
+    """
+    if not isinstance(result, dict):
+        return False, "review result is not a dict"
+    if result.get("isError") is True:
+        return False, "review isError=true"
+    if result.get("ok") is False:
+        return False, "review ok=false"
+    if result.get("approved") is False:
+        return False, "review approved=false"
+    warnings = result.get("warnings")
+    if warnings:
+        return False, f"review warnings present: {warnings!r}"
+    errors = result.get("errors")
+    if errors:
+        return False, f"review errors present: {errors!r}"
+    if result.get("rejected"):
+        return False, f"review rejected: {result.get('rejected')!r}"
+    rejection_reason = result.get("rejection_reason")
+    if rejection_reason:
+        return False, f"review rejection_reason: {rejection_reason!r}"
+    order_checks = result.get("order_checks")
+    if order_checks:
+        checks = order_checks if isinstance(order_checks, list) else [order_checks]
+        for check in checks:
+            if isinstance(check, dict):
+                tokens = " ".join(
+                    str(check.get(k) or "")
+                    for k in ("status", "result", "state", "outcome", "code", "name")
+                ).lower()
+            else:
+                tokens = str(check).lower()
+            if any(tok in tokens for tok in ("fail", "block", "reject")):
+                return False, f"review order_checks indicate failure: {check!r}"
+    return True, ""
 
 
 def _session_principal(
@@ -501,11 +553,23 @@ class RobinhoodMCPAdapter:
             self._audit(name, args, ok=True, result=result)
             if name == "review_option_order":
                 self._last_review = {"arguments": args, "result": result}
-                self._active_grant = {
-                    "grant_id": secrets.token_hex(8),
-                    "order_key": _review_grant_key(args),
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
+                approved, reject_reason = _review_outcome_approved(result)
+                if approved:
+                    self._active_grant = {
+                        "grant_id": secrets.token_hex(8),
+                        "order_key": _review_grant_key(args),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }
+                else:
+                    self._active_grant = None
+                    self._audit(
+                        name,
+                        args,
+                        ok=False,
+                        error=reject_reason,
+                        event="review_rejected",
+                        invariant="I2",
+                    )
             if name == "place_option_order":
                 self._active_grant = None
             return result
@@ -551,14 +615,32 @@ class RobinhoodMCPAdapter:
                 self._audit_deny(name, args, reason=reason, invariant="I8")
                 raise RhMcpKillSwitch(reason)
             # Entries (buy-to-open) and exits (sell-to-close) are gated by
-            # separate flags: initiating risk (open) is distinct from closing
-            # it (close). Missing/ambiguous effect defaults to exit-semantics.
+            # separate flags. Every leg must set position_effect to exactly
+            # open or close — unknown/empty effects are denied (I7).
             effects = {
                 str(leg.get("position_effect") or "").lower()
                 for leg in _normalize_legs(args)
             }
+            bad_effect = not effects or any(
+                effect not in {"open", "close"} for effect in effects
+            )
+            if bad_effect:
+                reason = (
+                    "rh_mcp: place_option_order requires explicit position_effect "
+                    "open or close on every leg"
+                )
+                self._audit_deny(name, args, reason=reason, invariant="I7")
+                raise RhMcpError(reason)
+            pinned = self.config.agentic_account_id
+            if not pinned:
+                reason = (
+                    "rh_mcp: place_option_order blocked — "
+                    "agentic_account_id / RH_AGENTIC_ACCOUNT_ID required"
+                )
+                self._audit_deny(name, args, reason=reason, invariant="I3")
+                raise RhMcpAccountRejected(reason)
             needs_entry = "open" in effects
-            needs_exit = ("close" in effects) or (not effects) or (effects == {""})
+            needs_exit = "close" in effects
             if needs_entry and not live_entries_enabled(config=self.config):
                 reason = (
                     "rh_mcp: place_option_order (open) blocked — "
@@ -598,8 +680,7 @@ class RobinhoodMCPAdapter:
                 or args.get("account")
                 or ""
             )
-            pinned = self.config.agentic_account_id
-            if pinned and account and account != pinned:
+            if account and account != pinned:
                 reason = (
                     f"rh_mcp: order account {account!r} != pinned Agentic {pinned!r}"
                 )
@@ -946,7 +1027,12 @@ class RobinhoodMCPAdapter:
                 f"rh_mcp entry: no quotable {underlying} {option_type} near {atm}"
             )
         if strike_mode == "cheapest_near_atm":
-            return min(enriched, key=lambda c: c["ask"])
+            # Match paper pick_cheapest_atm_strike: nearest to index level
+            # first, lowest ask only as a tiebreak.
+            return min(
+                enriched,
+                key=lambda c: (abs((c["strike"] or 0.0) - level), c["ask"]),
+            )
         if strike_mode == "otm_one" and option_type.strip().lower() == "call":
             return min(enriched, key=lambda c: abs((c["strike"] or 0.0) - otm_target))
         return min(enriched, key=lambda c: abs((c["strike"] or 0.0) - atm))

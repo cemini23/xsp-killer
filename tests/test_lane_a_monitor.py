@@ -100,6 +100,97 @@ def test_stop_loss_20pct_alert():
     assert any(a.exit_reason == "stop_loss" for a in alerts)
 
 
+def test_classify_position_preserves_zero_mark():
+    pos = classify_position(_raw(avg=2.00, mark=0.0), RULES, today=FIXED_TODAY)
+    assert pos is not None
+    assert pos.mark_price == 0.0
+
+
+def test_zero_mark_triggers_stop_loss_not_suppression():
+    pos = classify_position(_raw(avg=2.00, mark=0.0), RULES, today=FIXED_TODAY)
+    assert pos is not None
+    assert pos.mark_price == 0.0
+    now = datetime(2026, 6, 16, 9, 45, tzinfo=ET)
+    alerts = evaluate_exit_alerts(pos, RULES, now_et=now)
+    assert any(a.exit_reason == "stop_loss" for a in alerts)
+    # Return pct must be computable from a preserved zero mark (full loss).
+    assert pos.pnl_per_contract is not None
+    assert pos.pnl_per_contract < 0
+
+
+def test_run_monitor_evaluates_paper_book_when_rh_positions_present(
+    tmp_path, monkeypatch
+):
+    """Paper exits must still evaluate when a real RH UUID is also classified."""
+    paper_id = "paper:XSP:2026-07-18:6000"
+    rh_id = "11111111-1111-1111-1111-111111111111"
+    state = {
+        "paper_positions": {
+            paper_id: {
+                "position_id": paper_id,
+                "lane": "A",
+                "chain_symbol": "XSP",
+                "option_type": "call",
+                "strike": 6000.0,
+                "expiration_date": "2026-07-18",
+                "quantity": 1.0,
+                "average_price": 2.5,
+                "mark_price": 2.5,
+                "entry_mid_premium": 2.5,
+                "status": "open",
+                "entry_ts": "2026-06-15T19:45:00+00:00",
+            }
+        }
+    }
+    save_state(tmp_path / "state.json", state)
+
+    monkeypatch.setattr(lane_a_monitor, "rh_read_enabled", lambda: True)
+    monkeypatch.setattr(
+        lane_a_monitor,
+        "fetch_robinhood_option_positions",
+        lambda: (
+            [
+                {
+                    "id": rh_id,
+                    "chain_symbol": "XSP",
+                    "type": "call",
+                    "expiration_date": "2026-07-18",
+                    "strike_price": 6010.0,
+                    "quantity": 1.0,
+                    "average_price": 3.0,
+                    "mark_price": 3.0,
+                }
+            ],
+            None,
+        ),
+    )
+
+    def _stop_loss_mark(rows):
+        return [{**row, "mark_price": 1.5} for row in rows]
+
+    monkeypatch.setattr(lane_a_monitor, "refresh_paper_marks", _stop_loss_mark)
+    monkeypatch.setattr("xsp_killer.lane_a_entry.fetch_spx_proxy", lambda: 6000.0)
+
+    report = run_monitor(
+        state_path=tmp_path / "state.json",
+        now_et=datetime(2026, 6, 16, 9, 45, tzinfo=ET),
+        publish_intel=False,
+        fetch_ta=False,
+        write_paper_brief=False,
+    )
+
+    pos_ids = {p["position_id"] for p in report.positions}
+    assert rh_id in pos_ids
+    assert paper_id in pos_ids
+    assert any(
+        a["position_id"] == paper_id and a["exit_reason"] == "stop_loss"
+        for a in report.alerts
+    )
+    refreshed = load_state(tmp_path / "state.json")
+    assert refreshed["paper_positions"][paper_id]["status"] == "closed"
+    assert refreshed["paper_positions"][paper_id]["exit_reason"] == "stop_loss"
+
+
 def test_no_exit_when_xsp_session_closed():
     pos = classify_position(_raw(avg=2.00, mark=1.50), RULES, today=FIXED_TODAY)
     assert pos is not None
@@ -783,9 +874,21 @@ def test_dry_run_reviews_real_position_no_place_when_off(monkeypatch):
     assert "review" in out[0]
 
 
-def test_dry_run_places_real_exit_when_live(monkeypatch):
+def test_dry_run_places_real_exit_when_live(monkeypatch, tmp_path):
     monkeypatch.setattr(lane_a_monitor, "rh_mcp_enabled", lambda: True)
     _force_live(monkeypatch, True)
+    from xsp_killer.live_gates import REQUIRED_STATEMENT
+    import json
+
+    vid = "xsp_lane_a_v2"
+    ack = tmp_path / "LIVE_HUMAN_REVIEW.json"
+    ack.write_text(
+        json.dumps({"variant_id": vid, "statement": REQUIRED_STATEMENT}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XSP_LANE_A_LIVE_VARIANT_ID", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK_PATH", str(ack))
     seen: dict[str, object] = {}
 
     class FakeAdapter:
@@ -813,6 +916,70 @@ def test_dry_run_places_real_exit_when_live(monkeypatch):
     )
     assert out[0]["live"] is True
     assert out[0]["placed"]["data"]["id"] == "order-123"
+
+
+def test_variant_monitor_does_not_place_when_live_variant_id_unset(
+    monkeypatch,
+):
+    monkeypatch.setattr(lane_a_monitor, "rh_mcp_enabled", lambda: True)
+    _force_live(monkeypatch, True)
+    monkeypatch.delenv("XSP_LANE_A_LIVE_VARIANT_ID", raising=False)
+
+    class FakeAdapter:
+        config = None
+
+        def review_option_order(self, order):
+            return {"data": {"ok": True}}
+
+        def place_option_order(self, order):
+            raise AssertionError("variant monitor must not place without allowlist")
+
+        def phase1_canary_review(self, **kwargs):
+            raise AssertionError("canary must not run with a real position")
+
+    monkeypatch.setattr(lane_a_monitor, "RobinhoodMCPAdapter", FakeAdapter)
+    uid = "11111111-1111-1111-1111-111111111111"
+    out = dry_run_exit_reviews_via_mcp(
+        [_mk_alert(uid)],
+        [_mk_position(uid)],
+        variant_monitor=True,
+        variant_id="xsp_lane_a_v2_easy_tp",
+    )
+    assert out[0]["live"] is False
+    assert "review" in out[0]
+    assert "placed" not in out[0]
+
+
+def test_variant_monitor_does_not_place_when_live_variant_id_mismatched(
+    monkeypatch,
+):
+    monkeypatch.setattr(lane_a_monitor, "rh_mcp_enabled", lambda: True)
+    _force_live(monkeypatch, True)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_VARIANT_ID", "xsp_lane_a_v2_promoted")
+
+    class FakeAdapter:
+        config = None
+
+        def review_option_order(self, order):
+            return {"data": {"ok": True}}
+
+        def place_option_order(self, order):
+            raise AssertionError("mismatched LIVE_VARIANT_ID must block place")
+
+        def phase1_canary_review(self, **kwargs):
+            raise AssertionError("canary must not run with a real position")
+
+    monkeypatch.setattr(lane_a_monitor, "RobinhoodMCPAdapter", FakeAdapter)
+    uid = "11111111-1111-1111-1111-111111111111"
+    out = dry_run_exit_reviews_via_mcp(
+        [_mk_alert(uid)],
+        [_mk_position(uid)],
+        variant_monitor=True,
+        variant_id="xsp_lane_a_v2_easy_tp",
+    )
+    assert out[0]["live"] is False
+    assert "review" in out[0]
+    assert "placed" not in out[0]
 
 
 def test_dry_run_kill_switch_blocks_place(monkeypatch):

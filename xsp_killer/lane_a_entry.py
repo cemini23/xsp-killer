@@ -1186,13 +1186,11 @@ def _maybe_place_live_entry(
     current_variant = str(
         getattr(lane_rules, "logic_version", None) or decision.logic_version or ""
     )
-    if not _live_variant_allowed(
-        current_variant, os.getenv("XSP_LANE_A_LIVE_VARIANT_ID")
-    ):
-        decision.live_order = {
-            "placed": False,
-            "reason": "variant not in live allowlist",
-        }
+    from xsp_killer.live_gates import human_variant_review_allows
+
+    ok_review, review_reason = human_variant_review_allows(current_variant)
+    if not ok_review:
+        decision.live_order = {"placed": False, "reason": review_reason}
         return
     live_cfg = _live_entry_safety_config()
     if bool(live_cfg["veto_red"]):
@@ -1413,6 +1411,70 @@ def close_open_paper_positions(
     return closed
 
 
+def _expired_paper_full_debit_pnl(
+    raw: dict[str, Any],
+    *,
+    rules_path: Path | None = None,
+) -> tuple[float | None, float | None]:
+    """Book expired long call as exit mid 0.0 (full debit loss × quantity)."""
+    try:
+        qty = float(raw.get("quantity") or 1.0)
+    except (TypeError, ValueError):
+        qty = 1.0
+    if qty <= 0:
+        qty = 1.0
+
+    avg_raw = raw.get("average_price")
+    entry_mid_raw = raw.get("entry_mid_premium")
+    try:
+        avg = float(avg_raw) if avg_raw is not None else None
+    except (TypeError, ValueError):
+        avg = None
+    try:
+        entry_mid = float(entry_mid_raw) if entry_mid_raw is not None else None
+    except (TypeError, ValueError):
+        entry_mid = None
+
+    pnl_per: float | None = None
+    try:
+        from xsp_killer.paper_economics import (
+            PaperEconomics,
+            pnl_from_entry_fill,
+            pnl_per_contract,
+        )
+
+        econ = PaperEconomics.from_yaml(rules_path or DEFAULT_RULES)
+        if (
+            avg is not None
+            and entry_mid is not None
+            and abs(avg - entry_mid) > 1e-6
+            and avg > 0
+        ):
+            # average_price already includes entry fill economics.
+            pnl_per = pnl_from_entry_fill(
+                entry_fill=avg, exit_mid=0.0, econ=econ
+            )
+        elif entry_mid is not None and entry_mid > 0:
+            pnl_per = pnl_per_contract(
+                entry_mid=entry_mid, exit_mid=0.0, econ=econ
+            )
+        elif avg is not None and avg > 0:
+            pnl_per = pnl_from_entry_fill(
+                entry_fill=avg, exit_mid=0.0, econ=econ
+            )
+    except Exception as exc:
+        logger.warning("expired paper economics pnl failed: %s", exc)
+
+    if pnl_per is None:
+        # Fallback: raw debit × 100 when entry fill/mid is missing economics path.
+        debit = avg if avg is not None and avg > 0 else entry_mid
+        if debit is None or debit <= 0:
+            return None, None
+        pnl_per = round(-debit * 100.0, 2)
+
+    return pnl_per, round(pnl_per * qty, 2)
+
+
 def reap_expired_paper_positions(
     state: dict[str, Any],
     *,
@@ -1447,8 +1509,9 @@ def reap_expired_paper_positions(
         row["status"] = "closed"
         row["exit_ts"] = ts
         row["exit_reason"] = "expired"
-        row["exit_pnl_usd"] = None
-        row["exit_pnl_per_contract"] = None
+        pnl_per, pnl_usd = _expired_paper_full_debit_pnl(raw)
+        row["exit_pnl_usd"] = pnl_usd
+        row["exit_pnl_per_contract"] = pnl_per
         paper[pid] = row
         closed.append(row)
         evt_key = (pid, "expired", ts[:10])
@@ -1458,8 +1521,8 @@ def reap_expired_paper_positions(
                     "evaluated_at": ts,
                     "position_id": pid,
                     "exit_reason": "expired",
-                    "paper_pnl_usd": None,
-                    "paper_pnl_per_contract": None,
+                    "paper_pnl_usd": pnl_usd,
+                    "paper_pnl_per_contract": pnl_per,
                     "logic_version": raw.get("logic_version", "xsp_lane_a_v1"),
                     "paper_mode": "automated_paper_close",
                     "entry_ts": raw.get("entry_ts"),

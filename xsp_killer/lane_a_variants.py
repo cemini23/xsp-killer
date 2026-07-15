@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import math
@@ -16,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from xsp_killer.fs_lock import flock_un, open_ex_lock
 from xsp_killer.lane_a_entry import (
     DEFAULT_TELEMETRY_BRIEF,
     _sync_entry_telemetry,
@@ -135,10 +135,7 @@ def variant_state_slice(root: dict[str, Any], variant_id: str) -> dict[str, Any]
 
 
 def _variants_state_lock(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(path, "a+", encoding="utf-8")
-    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-    return fh
+    return open_ex_lock(path)
 
 
 def _write_variants_state(root: dict[str, Any], path: Path | None = None) -> Path:
@@ -147,7 +144,7 @@ def _write_variants_state(root: dict[str, Any], path: Path | None = None) -> Pat
     try:
         p.write_text(json.dumps(root, indent=2) + "\n", encoding="utf-8")
     finally:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        flock_un(lock)
         lock.close()
     return p
 
@@ -171,7 +168,7 @@ def _variants_rmw_lock(path: Path | None = None):
     finally:
         if fh is not None:
             try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                flock_un(fh)
                 fh.close()
             except Exception:  # noqa: BLE001 — best-effort release
                 pass
@@ -1336,15 +1333,27 @@ def build_scoreboard(
                 continue
             if latest_entry_eval is None or evaluated_at > latest_entry_eval:
                 latest_entry_eval = evaluated_at
-        realized = round(sum(float(e.get("paper_pnl_usd") or 0) for e in events), 2)
-        wins = sum(1 for e in events if float(e.get("paper_pnl_usd") or 0) > 0)
-        losses = sum(1 for e in events if float(e.get("paper_pnl_usd") or 0) < 0)
+        realized_pnls: list[float] = []
+        trades_missing_pnl = 0
+        for e in events:
+            raw_pnl = e.get("paper_pnl_usd")
+            if raw_pnl is None:
+                trades_missing_pnl += 1
+                continue
+            try:
+                realized_pnls.append(float(raw_pnl))
+            except (TypeError, ValueError):
+                trades_missing_pnl += 1
+        realized = round(sum(realized_pnls), 2)
+        wins = sum(1 for p in realized_pnls if p > 0)
+        losses = sum(1 for p in realized_pnls if p < 0)
         trades = len(events)
+        pnl_trades = len(realized_pnls)
         evals_total = len(entry_logs)
         weekend_evals_excluded = _weekend_eval_count(entry_logs)
         sessions_evaluated = len(unique_et_sessions(entry_logs))
-        win_rate = round(wins / trades * 100.0, 1) if trades else None
-        avg_pnl = round(realized / trades, 2) if trades else None
+        win_rate = round(wins / pnl_trades * 100.0, 1) if pnl_trades else None
+        avg_pnl = round(realized / pnl_trades, 2) if pnl_trades else None
         # Dual-log the real-dollar (1x) equivalent so a $1k account can be judged
         # directly. Paper $ use the SPY->XSP premium scale (~10x); dividing by it
         # is a first-order approximation (fixed commission/slippage don't scale).
@@ -1363,7 +1372,7 @@ def build_scoreboard(
             sessions_evaluated < PROMOTION_SESSIONS_GATE
             or trades < PROMOTION_TRADES_GATE
         )
-        wilson_lb = wilson_lower_bound(wins, trades)
+        wilson_lb = wilson_lower_bound(wins, pnl_trades)
         breakeven = _variant_breakeven_win_rate(rules_path)
         edge_confirmed = bool(
             not low_sample_flag
@@ -1382,6 +1391,7 @@ def build_scoreboard(
             "variant_id": variant_id,
             "description": description,
             "trades_closed": trades,
+            "trades_missing_pnl": trades_missing_pnl,
             "wins": wins,
             "losses": losses,
             "win_rate_pct": win_rate,

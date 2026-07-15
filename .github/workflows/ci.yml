@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -43,13 +44,15 @@ jobs:
             xsp_killer/vol_monitor.py \
             xsp_killer/conductor_reviewer.py \
             xsp_killer/debit_spread.py \
+            xsp_killer/uw_shadow.py \
             tests/test_health_soak.py \
             tests/test_rh_mcp_confidence.py \
             tests/test_risk_and_conductor.py \
             tests/test_robinhood_mcp.py \
             tests/test_vol_monitor.py \
             tests/test_conductor_reviewer.py \
-            tests/test_debit_spread.py
+            tests/test_debit_spread.py \
+            tests/test_uw_shadow.py
           ruff format --check \
             xsp_killer/data_hazards.py \
             xsp_killer/health_soak.py \
@@ -59,13 +62,15 @@ jobs:
             xsp_killer/vol_monitor.py \
             xsp_killer/conductor_reviewer.py \
             xsp_killer/debit_spread.py \
+            xsp_killer/uw_shadow.py \
             tests/test_health_soak.py \
             tests/test_rh_mcp_confidence.py \
             tests/test_risk_and_conductor.py \
             tests/test_robinhood_mcp.py \
             tests/test_vol_monitor.py \
             tests/test_conductor_reviewer.py \
-            tests/test_debit_spread.py
+            tests/test_debit_spread.py \
+            tests/test_uw_shadow.py
 
       - name: Bandit (deterministic SAST)
         run: |

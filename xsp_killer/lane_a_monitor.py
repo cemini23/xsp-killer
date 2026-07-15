@@ -6,7 +6,6 @@ No auto-close until Phase 1 gates pass.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -20,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from xsp_killer.fs_lock import flock_un, open_ex_lock
 from xsp_killer.paper_economics import load_premium_scale
 from xsp_killer.rh_broker import (
     fetch_robinhood_option_positions,
@@ -177,6 +177,7 @@ class MonitorReport:
     paper_hypothetical_exits: list[dict[str, Any]] = field(default_factory=list)
     ta_snapshot: dict[str, Any] | None = None
     macro_weather_extras: dict[str, Any] | None = None
+    uw_shadow: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -184,10 +185,7 @@ class MonitorReport:
 
 def _state_lock(path: Path):
     lock_path = path.with_suffix(path.suffix + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fh = lock_path.open("a+", encoding="utf-8")
-    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-    return fh
+    return open_ex_lock(lock_path)
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -199,7 +197,7 @@ def load_state(path: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError):
         return {"positions": {}}
     finally:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        flock_un(lock)
         lock.close()
 
 
@@ -209,7 +207,7 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     try:
         path.write_text(json.dumps(state, indent=2) + chr(10), encoding="utf-8")
     finally:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        flock_un(lock)
         lock.close()
 
 
@@ -269,6 +267,14 @@ def is_lane_a_monitor_contract(
     return 0 <= dte <= rules.dte_max
 
 
+def _first_present(*candidates: Any) -> Any:
+    """Return the first value that is not None (preserves 0.0 / 0 / False)."""
+    for value in candidates:
+        if value is not None:
+            return value
+    return None
+
+
 def classify_position(
     raw: dict[str, Any],
     rules: LaneRules,
@@ -306,8 +312,8 @@ def classify_position(
     if qty <= 0:
         return None
     avg = float(raw.get("average_price") or raw.get("avg_price") or 0)
-    mark_raw = (
-        raw.get("mark_price") or raw.get("mark") or raw.get("adjusted_mark_price")
+    mark_raw = _first_present(
+        raw.get("mark_price"), raw.get("mark"), raw.get("adjusted_mark_price")
     )
     mark = float(mark_raw) if mark_raw is not None else None
     pos_id = str(
@@ -665,7 +671,7 @@ def paper_positions_to_lane(
         if qty <= 0:
             continue
         avg = float(raw.get("average_price") or 0)
-        mark_raw = raw.get("mark_price") or raw.get("mark")
+        mark_raw = _first_present(raw.get("mark_price"), raw.get("mark"))
         mark = float(mark_raw) if mark_raw is not None else None
         entry_mid_raw = raw.get("entry_mid_premium")
         entry_mid = (
@@ -922,6 +928,9 @@ def _build_close_order(option_id: str, pos: "LaneAPosition") -> dict[str, Any]:
 def dry_run_exit_reviews_via_mcp(
     alerts: list["ExitAlert"],
     positions: list["LaneAPosition"],
+    *,
+    variant_monitor: bool = False,
+    variant_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Exit signal handoff to Robinhood MCP: always review, place when live.
 
@@ -931,6 +940,9 @@ def dry_run_exit_reviews_via_mcp(
     - Every real exit reviews first (``review_option_order``) for an audited
       preview, then places (``place_option_order``) ONLY when live exits are
       enabled and the kill switch is clear; otherwise it stays review-only.
+    - Live places require hard human variant review (``XSP_LANE_A_LIVE_VARIANT_ID``
+      + ``XSP_LANE_A_LIVE_HUMAN_ACK`` + ack file) for that exact variant; paper
+      synthetic positions never place.
     - Live placement uses a deterministic ``ref_id`` per (option, day, reason)
       so the 4 morning monitor runs can't create duplicate exit orders.
     - When nothing is reviewable, a single buy-to-open proof-of-life canary
@@ -942,6 +954,17 @@ def dry_run_exit_reviews_via_mcp(
     pos_by_id = {p.position_id: p for p in positions}
     adapter = RobinhoodMCPAdapter()
     live = live_exits_enabled(config=adapter.config) and not kill_switch_engaged()
+    if live:
+        from xsp_killer.live_gates import human_variant_review_allows
+
+        # Variant monitors: ack must match this variant. Baseline uses
+        # LIVE_VARIANT_ID as the promoted id (must still dual-ack).
+        check_id = (variant_id or "").strip() or os.getenv(
+            "XSP_LANE_A_LIVE_VARIANT_ID", ""
+        )
+        ok_review, _reason = human_variant_review_allows(check_id)
+        if not ok_review:
+            live = False
     day = datetime.now(ET).date().isoformat()
     reviews: list[dict[str, Any]] = []
     reviewable = 0
@@ -1162,6 +1185,21 @@ def run_monitor(
     except Exception as exc:
         logger.info("k155 macro weather extras skipped: %s", exc)
 
+    try:
+        from xsp_killer.uw_shadow import build_monitor_uw_shadow
+
+        report.uw_shadow = build_monitor_uw_shadow(now_et=now_et)
+        if report.uw_shadow:
+            logger.info(
+                "uw_shadow attached (log-only): flow_bias=%s npt_bias=%s wall=%s iv_rank=%s",
+                (report.uw_shadow.get("flow") or {}).get("net_prem_bias"),
+                (report.uw_shadow.get("net_prem") or {}).get("net_prem_bias"),
+                (report.uw_shadow.get("gex") or {}).get("wall_side"),
+                (report.uw_shadow.get("iv_rank") or {}).get("iv_rank_1y"),
+            )
+    except Exception as exc:
+        logger.info("uw_shadow skipped: %s", exc)
+
     today = (now_et or datetime.now(ET)).date()
 
     paper_raw: list[dict[str, Any]] = []
@@ -1203,10 +1241,9 @@ def run_monitor(
         if pos is not None:
             classified.append(pos)
 
-    if not classified and state.get("paper_positions") and not positions_override:
-        classified = paper_positions_to_lane(
-            paper_raw, rules, today=today
-        )
+    # Paper ids are ``paper:...``; RH ids are UUIDs — always merge both books.
+    if state.get("paper_positions") and not positions_override:
+        classified.extend(paper_positions_to_lane(paper_raw, rules, today=today))
 
     merge_state_tags(classified, state)
     report.positions = [p.to_dict() for p in classified]
@@ -1248,7 +1285,12 @@ def run_monitor(
     if _variant_monitor and not all_alerts and not _has_rh_positions:
         report.rh_mcp_reviews = []
     else:
-        report.rh_mcp_reviews = dry_run_exit_reviews_via_mcp(all_alerts, classified)
+        report.rh_mcp_reviews = dry_run_exit_reviews_via_mcp(
+            all_alerts,
+            classified,
+            variant_monitor=_variant_monitor,
+            variant_id=rules.logic_version,
+        )
 
     paper_positions_active = bool(state.get("paper_positions")) and not positions_override
     if paper_positions_active:

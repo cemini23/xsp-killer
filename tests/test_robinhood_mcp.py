@@ -8,6 +8,7 @@ import pytest
 
 from xsp_killer.rh_broker import fetch_robinhood_option_positions, rh_read_enabled
 from xsp_killer.robinhood_mcp import (
+    RhMcpAccountRejected,
     RhMcpConfig,
     RhMcpError,
     RhMcpLiveExitsDisabled,
@@ -88,6 +89,19 @@ def test_normalize_mcp_position():
     assert row["type"] == "call"
     assert row["strike_price"] == 7500
     assert row["_source"] == "rh_mcp"
+
+
+def test_normalize_mcp_position_preserves_zero_mark():
+    row = normalize_mcp_position(
+        {
+            "chain_symbol": "XSP",
+            "type": "call",
+            "strike_price": 7500,
+            "mark_price": 0.0,
+            "adjusted_mark_price": 1.5,
+        }
+    )
+    assert row["mark_price"] == 0.0
 
 
 def test_parse_mcp_http_response_sse():
@@ -186,12 +200,113 @@ def test_place_order_blocked_when_live_exits_off(tmp_path, monkeypatch):
 
     adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
     with pytest.raises(RhMcpLiveExitsDisabled):
-        adapter.place_option_order({"quantity": 1, "side": "sell"})
+        adapter.place_option_order(
+            {
+                "quantity": 1,
+                "side": "sell",
+                "option_id": "opt-1",
+                "position_effect": "close",
+            }
+        )
     audit_rows = [json.loads(line) for line in audit.read_text().splitlines()]
     deny = audit_rows[-1]
     assert deny["event"] == "deny"
     assert deny["invariant"] == "I7"
     assert deny["principal"]["agentic_account_id"] == "agentic-1"
+
+
+def test_place_order_rejects_unknown_position_effect(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    monkeypatch.delenv("RH_AGENTIC_ACCOUNT_ID", raising=False)
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpError, match="position_effect"):
+        adapter.place_option_order(
+            {
+                "account_number": "agentic-1",
+                "legs": [
+                    {
+                        "option_id": "opt-1",
+                        "side": "sell",
+                        "position_effect": "opne",
+                    }
+                ],
+                "quantity": "1",
+            }
+        )
+    deny = json.loads(audit.read_text().strip().splitlines()[-1])
+    assert deny["event"] == "deny"
+    assert deny["invariant"] == "I7"
+
+
+def test_place_order_rejects_empty_position_effect(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    monkeypatch.delenv("RH_AGENTIC_ACCOUNT_ID", raising=False)
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpError, match="position_effect"):
+        adapter.place_option_order(
+            {"quantity": 1, "side": "sell", "option_id": "opt-1"}
+        )
+    deny = json.loads(audit.read_text().strip().splitlines()[-1])
+    assert deny["event"] == "deny"
+    assert deny["invariant"] == "I7"
+
+
+def test_place_order_denied_without_pinned_account(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    monkeypatch.delenv("RH_AGENTIC_ACCOUNT_ID", raising=False)
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpAccountRejected):
+        adapter.place_option_order(
+            {
+                "legs": [
+                    {
+                        "option_id": "opt-1",
+                        "side": "sell",
+                        "position_effect": "close",
+                    }
+                ],
+                "quantity": "1",
+            }
+        )
+    deny = json.loads(audit.read_text().strip().splitlines()[-1])
+    assert deny["event"] == "deny"
+    assert deny["invariant"] == "I3"
 
 
 def test_place_order_requires_matching_review_grant(tmp_path, monkeypatch):
@@ -212,7 +327,14 @@ def test_place_order_requires_matching_review_grant(tmp_path, monkeypatch):
 
     adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
     with pytest.raises(RhMcpError):
-        adapter.place_option_order({"quantity": 1, "side": "sell", "option_id": "x"})
+        adapter.place_option_order(
+            {
+                "quantity": 1,
+                "side": "sell",
+                "option_id": "x",
+                "position_effect": "close",
+            }
+        )
     deny = json.loads(audit.read_text().strip().splitlines()[-1])
     assert deny["invariant"] == "I2"
 
@@ -227,7 +349,12 @@ def test_review_grant_allows_matching_place(tmp_path, monkeypatch):
         live_exits=True,
         require_review_before_place=True,
     )
-    order = {"quantity": 1, "side": "sell", "option_id": "opt-1"}
+    order = {
+        "quantity": 1,
+        "side": "sell",
+        "option_id": "opt-1",
+        "position_effect": "close",
+    }
 
     def fake_http(url, body, headers):
         return {"result": {"structuredContent": {"ok": True}}}
@@ -372,6 +499,135 @@ def test_kill_switch_file_engages(tmp_path, monkeypatch):
     assert kill_switch_engaged() is False
     kill_file.write_text("halt", encoding="utf-8")
     assert kill_switch_engaged() is True
+
+
+def test_kill_switch_file_oserror_fails_closed(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from xsp_killer.robinhood_mcp import kill_switch_engaged
+
+    monkeypatch.delenv("XSP_LANE_A_KILL_SWITCH", raising=False)
+    monkeypatch.setenv("XSP_LANE_A_KILL_FILE", str(tmp_path / "KILL_SWITCH"))
+
+    def boom_exists(self):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "exists", boom_exists)
+    assert kill_switch_engaged() is True
+
+
+def test_review_with_warnings_does_not_grant_place(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=True,
+    )
+    order = {
+        "account_number": "agentic-1",
+        "legs": [{"option_id": "opt-1", "side": "sell", "position_effect": "close"}],
+        "quantity": "1",
+    }
+
+    def fake_http(url, body, headers):
+        return {
+            "result": {
+                "structuredContent": {"ok": True, "warnings": ["thin_liquidity"]}
+            }
+        }
+
+    adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
+    adapter.review_option_order(order)
+    assert adapter._active_grant is None
+    assert adapter._last_review is not None
+    with pytest.raises(RhMcpError, match="prior review_option_order"):
+        adapter.place_option_order(dict(order))
+    events = [json.loads(line)["event"] for line in audit.read_text().splitlines()]
+    assert "review_rejected" in events
+
+
+def test_review_rejection_blocks_place_grant(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=True,
+    )
+    order = {
+        "account_number": "agentic-1",
+        "legs": [{"option_id": "opt-1", "side": "sell", "position_effect": "close"}],
+        "quantity": "1",
+    }
+
+    def fake_http(url, body, headers):
+        return {
+            "result": {
+                "structuredContent": {
+                    "rejected": True,
+                    "rejection_reason": "insufficient buying power",
+                }
+            }
+        }
+
+    adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
+    adapter.review_option_order(order)
+    assert adapter._active_grant is None
+    deny = [
+        json.loads(line)
+        for line in audit.read_text().splitlines()
+        if json.loads(line).get("event") == "review_rejected"
+    ]
+    assert deny and deny[-1]["invariant"] == "I2"
+    with pytest.raises(RhMcpError, match="prior review_option_order"):
+        adapter.place_option_order(dict(order))
+
+
+def test_review_failed_order_checks_blocks_grant(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=True,
+    )
+    order = {
+        "account_number": "agentic-1",
+        "legs": [{"option_id": "opt-1", "side": "sell", "position_effect": "close"}],
+        "quantity": "1",
+    }
+
+    def fake_http(url, body, headers):
+        return {
+            "result": {
+                "structuredContent": {
+                    "ok": True,
+                    "order_checks": [{"status": "fail", "code": "OPTION_NO_BID_PRICE"}],
+                }
+            }
+        }
+
+    adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
+    adapter.review_option_order(order)
+    assert adapter._active_grant is None
+    events = [json.loads(line) for line in audit.read_text().splitlines()]
+    assert any(
+        row.get("event") == "review_rejected" and row.get("invariant") == "I2"
+        for row in events
+    )
 
 
 def test_phase1_canary_review_previews_without_placing(tmp_path):
@@ -602,9 +858,60 @@ def test_select_entry_contract_picks_cheapest_near_atm(tmp_path):
     from datetime import date as _date
 
     chosen = adapter.select_entry_contract(today=_date(2026, 7, 1))
-    assert chosen["instrument_id"] == "inst-760"  # cheapest ask
+    assert chosen["instrument_id"] == "inst-755"  # nearest ATM, not cheapest OTM
     assert chosen["expiration_date"] == "2026-07-21"  # min DTE
     assert chosen["dte"] == 20
+
+
+def test_cheapest_near_atm_prefers_nearest_strike_not_cheapest_otm(tmp_path):
+    cfg = RhMcpConfig(agentic_account_id="agentic-1")
+    adapter = RobinhoodMCPAdapter(config=cfg, http_post=lambda *a: {})
+    instruments = [
+        {"id": "inst-750", "strike_price": "750.0000", "type": "call"},
+        {"id": "inst-755", "strike_price": "755.0000", "type": "call"},
+        {"id": "inst-760", "strike_price": "760.0000", "type": "call"},
+    ]
+
+    def fake_call(name, args):
+        if name == "get_option_chains":
+            return {"symbol": "XSP", "expiration_dates": ["2026-07-21"]}
+        if name == "get_index_quotes":
+            return {"results": [{"last_trade_price": "755.0"}]}
+        if name == "get_option_instruments":
+            return {"results": instruments}
+        if name == "get_option_quotes":
+            return {
+                "results": [
+                    {
+                        "instrument_id": "inst-750",
+                        "ask_price": "1.05",
+                        "bid_price": "0.95",
+                        "mark_price": "1.00",
+                    },
+                    {
+                        "instrument_id": "inst-755",
+                        "ask_price": "0.80",
+                        "bid_price": "0.70",
+                        "mark_price": "0.75",
+                    },
+                    {
+                        "instrument_id": "inst-760",
+                        "ask_price": "0.60",
+                        "bid_price": "0.50",
+                        "mark_price": "0.55",
+                    },
+                ]
+            }
+        raise AssertionError(name)
+
+    adapter.call_tool = fake_call  # type: ignore[method-assign]
+    from datetime import date as _date
+
+    chosen = adapter.select_entry_contract(
+        strike_pick="cheapest_near_atm", today=_date(2026, 7, 1)
+    )
+    assert chosen["instrument_id"] == "inst-755"
+    assert chosen["strike"] == 755.0
 
 
 def test_select_entry_contract_picks_nearest_target_dte(tmp_path):

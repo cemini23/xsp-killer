@@ -15,8 +15,8 @@ from pathlib import Path
 
 XSP_ROOT = Path(__file__).resolve().parent.parent
 CEMINI = Path("/opt/cemini")
-PROMPT = XSP_ROOT / "prompts" / "xsp_killer_super_audit.md"
-DEFAULT_OUT = XSP_ROOT / "reports" / "gap-audit" / "pack-xsp-killer-v4"
+PROMPT = XSP_ROOT / "prompts" / "xsp_killer_super_audit_v9.md"
+DEFAULT_OUT = XSP_ROOT / "reports" / "gap-audit" / "pack-xsp-killer-v9"
 
 
 def _read_tail(path: Path, max_chars: int = 12000) -> str:
@@ -190,6 +190,18 @@ def main() -> int:
             XSP_ROOT / "briefs" / "2026-06-16_xsp-killer-super-audit-synthesis-v2.md",
             15000,
         ),
+        "prior_audit_synthesis_v8.md": _read_tail(
+            XSP_ROOT / "briefs" / "2026-07-09_xsp-killer-super-audit-synthesis-v8.md",
+            15000,
+        ),
+        "rh_mcp_connection_brief.md": _read_tail(
+            XSP_ROOT
+            / "briefs"
+            / "2026-06-29_xsp-robinhood-agentic-mcp-connection-cemini-prod.md",
+            16000,
+        ),
+        "rh_mcp.yaml": _read_tail(XSP_ROOT / "config" / "rh_mcp.yaml", 4000),
+        "rh_mcp_runbook.md": _read_tail(XSP_ROOT / "docs" / "rh_mcp_runbook.md", 12000),
         "lane_a_monitor_latest.json": _read_json_pretty(
             XSP_ROOT / "briefs" / "xsp-lane-a-monitor-latest.json"
         ),
@@ -350,9 +362,10 @@ def main() -> int:
         "- Librarian/OSINT remote wiki **destroyed**; local research_wiki only",
         "- XSP timers: xsp-killer-* on prod; cemini-xsp-lane-* disabled post-cutover",
         "- RH poll off by default; paper log only for Lane A entries",
-        "- **16 variant shadow soak active** — scoreboard + regime_gate_comparison + variant logs",
+        "- RH Agentic MCP scaffolded; agentic_account_id empty until David OAuth",
+        "- **~12 active shadow keepers** (far-DTE OTM 45–60 pruned 2026-07-13)",
         "- Post-epoch only: pnl_epoch_at in scoreboard; promotion gate ≥20 sessions",
-        "- Jun 2026 upgrades: premium_scale, telemetry, vol shadow, hazard tags",
+        "- Live fail-closed: LIVE_ENTRIES off; max_debit_usd + max_loss_usd gates",
         "",
     ]
 
@@ -363,6 +376,10 @@ def main() -> int:
     key_excerpts = [
         out / "lane_a_rules.yaml",
         out / "lane_a_variants.yaml",
+        out / "rh_mcp.yaml",
+        out / "rh_mcp_runbook.md",
+        out / "rh_mcp_connection_brief.md",
+        out / "prior_audit_synthesis_v8.md",
         out / "variants_scoreboard.json",
         out / "deployment_status.txt",
         out / "entry_telemetry_latest.json",
@@ -378,9 +395,12 @@ def main() -> int:
         out / "xsp_killer_source" / "lane_a_ta.py",
         out / "xsp_killer_source" / "macro_regime.py",
         out / "xsp_killer_source" / "paper_economics.py",
+        out / "xsp_killer_source" / "robinhood_mcp.py",
+        out / "xsp_killer_source" / "rh_broker.py",
         out / "docs" / "lane-a-brief.md",
         out / "paper_log_lane_a.jsonl",
         out / "pytest_results.txt",
+        out / "xsp_git_log.txt",
     ]
     excerpt_parts = [pack_index, "\n---\n\n## Key excerpts\n"]
     for fp in key_excerpts:

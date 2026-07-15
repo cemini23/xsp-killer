@@ -151,7 +151,7 @@ def test_cli_check_invariants_exit_code(sample_module, tmp_path):
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "PYTHONPATH": f"{tmp_path}:{ROOT}"},
+        env={**os.environ, "PYTHONPATH": os.pathsep.join((str(tmp_path), str(ROOT)))},
     )
     assert proc.returncode == 1
     assert f"ok {sample_module}" in proc.stdout

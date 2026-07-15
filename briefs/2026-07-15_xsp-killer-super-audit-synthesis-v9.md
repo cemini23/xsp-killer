@@ -148,4 +148,6 @@ target: cemini-prod /opt/xsp-killer + David local RH bring-up
 
 **Overall:** **REJECT live ship · SHIP-WITH-FIXES for paper+read path** — one paragraph: HEAD has real safety scaffolding (debit caps, exact entry allowlist, kill switch, separate entry/exit flags), but unfixed exit fan-out, review/effect gate holes, paper/live selector mismatch, and David Windows/OneDrive ops make any live RH placement premature. Next session: patch P0s, VPS evidence pack, then David OAuth reads only.
 
+**Post-merge follow-up (2026-07-15 evening):** Most ranked P0 code items landed in PR #1 + Claudio residual patches. Status matrix + David tomorrow list: `briefs/2026-07-15_v9-backlog-postpatch-status.md` · `briefs/2026-07-16_david-onsite-first-thing.md`. Live writes remain **NO-GO**.
+
 **Prior synthesis:** `briefs/2026-07-09_xsp-killer-super-audit-synthesis-v8.md`

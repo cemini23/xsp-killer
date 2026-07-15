@@ -898,8 +898,26 @@ def _phase1_canary_enabled() -> bool:
 _EXIT_REF_NAMESPACE = uuid.UUID("7d5a6c2e-3b41-4e0a-9c2d-000000000001")
 
 
-def _exit_ref_id(option_id: str, day: str, exit_reason: str) -> str:
-    return str(uuid.uuid5(_EXIT_REF_NAMESPACE, f"{option_id}:{day}:{exit_reason}"))
+def _exit_ref_id(
+    option_id: str,
+    day: str,
+    exit_reason: str,
+    *,
+    now_et: datetime | None = None,
+) -> str:
+    """Idempotent place key per option/day/reason + AM/PM session.
+
+    Same-session monitor re-runs share one ref (broker dedupe). An unfilled
+    GFD from the morning can be re-tried after 12:00 ET with a new mid-day key
+    (v9 P1 — cancel/replace without spamming every 15m cron).
+    """
+    now = now_et or datetime.now(ET)
+    session = "am" if now.hour < 12 else "pm"
+    return str(
+        uuid.uuid5(
+            _EXIT_REF_NAMESPACE, f"{option_id}:{day}:{exit_reason}:{session}"
+        )
+    )
 
 
 def _build_close_order(option_id: str, pos: "LaneAPosition") -> dict[str, Any]:
@@ -951,21 +969,32 @@ def dry_run_exit_reviews_via_mcp(
     """
     if not rh_mcp_enabled():
         return []
+    from xsp_killer.live_gates import human_variant_review_allows, live_variant_id
+
+    # v9 P0#1 — non-promoted variant monitors skip MCP entirely so they cannot
+    # fan-out reviews/grants against RH positions under their own TP/SL.
+    allowed = live_variant_id()
+    check_id = (variant_id or "").strip() or allowed
+    if variant_monitor and allowed and check_id != allowed:
+        return [
+            {
+                "skipped": "variant_monitor_not_promoted",
+                "variant_id": check_id,
+                "live_variant_id": allowed,
+            }
+        ]
+
     pos_by_id = {p.position_id: p for p in positions}
     adapter = RobinhoodMCPAdapter()
     live = live_exits_enabled(config=adapter.config) and not kill_switch_engaged()
     if live:
-        from xsp_killer.live_gates import human_variant_review_allows
-
         # Variant monitors: ack must match this variant. Baseline uses
         # LIVE_VARIANT_ID as the promoted id (must still dual-ack).
-        check_id = (variant_id or "").strip() or os.getenv(
-            "XSP_LANE_A_LIVE_VARIANT_ID", ""
-        )
         ok_review, _reason = human_variant_review_allows(check_id)
         if not ok_review:
             live = False
-    day = datetime.now(ET).date().isoformat()
+    now_et = datetime.now(ET)
+    day = now_et.date().isoformat()
     reviews: list[dict[str, Any]] = []
     reviewable = 0
     for alert in alerts:
@@ -994,7 +1023,9 @@ def dry_run_exit_reviews_via_mcp(
             if live:
                 place_order = {
                     **order,
-                    "ref_id": _exit_ref_id(option_id, day, alert.exit_reason),
+                    "ref_id": _exit_ref_id(
+                        option_id, day, alert.exit_reason, now_et=now_et
+                    ),
                 }
                 entry["placed"] = adapter.place_option_order(place_order)
             reviews.append(entry)

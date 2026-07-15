@@ -357,11 +357,41 @@ def _review_grant_key(order: dict[str, Any]) -> str:
         "stop_price": str(order.get("stop_price"))
         if order.get("stop_price") is not None
         else None,
+        # v9 P1#10 — TIF must match between review and place grants.
+        "time_in_force": order.get("time_in_force") or order.get("tif"),
         "legs": _normalize_legs(order),
     }
     payload = {k: v for k, v in payload.items() if v not in (None, [], "")}
     return json.dumps(payload, sort_keys=True, default=str)
 
+
+def pinned_account_on_token(
+    adapter: "RobinhoodMCPAdapter | None" = None,
+) -> tuple[bool, str]:
+    """v9 P1#12 — fail if RH_AGENTIC_ACCOUNT_ID is not on this token's accounts."""
+    client = adapter or RobinhoodMCPAdapter()
+    pinned = (
+        os.getenv("RH_AGENTIC_ACCOUNT_ID", "").strip()
+        or client.config.agentic_account_id
+    )
+    if not pinned:
+        return False, "RH_AGENTIC_ACCOUNT_ID / agentic_account_id unset"
+    try:
+        accounts = client.get_accounts()
+    except Exception as exc:  # noqa: BLE001
+        return False, f"get_accounts failed: {exc}"
+    nums: set[str] = set()
+    for acct in accounts:
+        for key in ("account_number", "rhs_account_number", "id"):
+            val = acct.get(key)
+            if val is not None and str(val).strip():
+                nums.add(str(val).strip())
+    if pinned in nums:
+        return True, f"pinned account {pinned} present on token"
+    return False, (
+        f"pinned account {pinned!r} not in get_accounts "
+        f"({len(nums)} account id(s) seen) — refuse Claudio/David mixup"
+    )
 
 def _review_outcome_approved(result: Any) -> tuple[bool, str]:
     """Return (approved, reason) for a ``review_option_order`` business outcome.

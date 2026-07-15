@@ -28,6 +28,7 @@ from xsp_killer.rh_broker import (  # noqa: E402
 from xsp_killer.robinhood_mcp import (  # noqa: E402
     RhMcpConfig,
     live_exits_enabled,
+    pinned_account_on_token,
     rh_mcp_enabled as mcp_flag,
 )
 
@@ -56,6 +57,11 @@ def main() -> int:
         return 0
 
     if rh_mcp_enabled():
+        pin_ok, pin_reason = pinned_account_on_token()
+        print(f"pinned_account_on_token: {pin_ok} ({pin_reason})")
+        if not pin_ok and cfg.agentic_account_id:
+            print("WARNING: pin/token mismatch — do not enable LIVE_*")
+
         rows, err = fetch_robinhood_option_positions()
         print(f"\nMCP positions: {len(rows)}")
         if err:

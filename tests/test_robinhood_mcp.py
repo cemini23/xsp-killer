@@ -13,9 +13,11 @@ from xsp_killer.robinhood_mcp import (
     RhMcpError,
     RhMcpLiveExitsDisabled,
     RobinhoodMCPAdapter,
+    _review_grant_key,
     live_exits_enabled,
     normalize_mcp_position,
     parse_mcp_http_response,
+    pinned_account_on_token,
     rh_mcp_enabled,
 )
 
@@ -1012,3 +1014,36 @@ def test_select_entry_contract_raises_when_no_expiration(tmp_path):
 
     with pytest.raises(RhMcpError):
         adapter.select_entry_contract(today=_date(2026, 7, 1))
+
+
+def test_review_grant_key_includes_time_in_force():
+    a = _review_grant_key({"quantity": "1", "type": "limit", "time_in_force": "gfd"})
+    b = _review_grant_key({"quantity": "1", "type": "limit", "time_in_force": "ioc"})
+    assert a != b
+    assert "gfd" in a
+
+
+def test_pinned_account_on_token_match(monkeypatch):
+    class Fake:
+        config = RhMcpConfig(agentic_account_id="ACC-1", token_path=__import__("pathlib").Path("."))
+
+        def get_accounts(self):
+            return [{"account_number": "ACC-1", "nickname": "Agentic"}]
+
+    monkeypatch.setenv("RH_AGENTIC_ACCOUNT_ID", "ACC-1")
+    ok, reason = pinned_account_on_token(Fake())  # type: ignore[arg-type]
+    assert ok is True
+    assert "present" in reason
+
+
+def test_pinned_account_on_token_mismatch(monkeypatch):
+    class Fake:
+        config = RhMcpConfig(agentic_account_id="CLAUDIO", token_path=__import__("pathlib").Path("."))
+
+        def get_accounts(self):
+            return [{"account_number": "DAVID", "nickname": "Agentic"}]
+
+    monkeypatch.setenv("RH_AGENTIC_ACCOUNT_ID", "CLAUDIO")
+    ok, reason = pinned_account_on_token(Fake())  # type: ignore[arg-type]
+    assert ok is False
+    assert "not in get_accounts" in reason

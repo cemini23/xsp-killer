@@ -961,7 +961,7 @@ def test_variant_monitor_does_not_place_when_live_variant_id_mismatched(
         config = None
 
         def review_option_order(self, order):
-            return {"data": {"ok": True}}
+            raise AssertionError("mismatched variant must not MCP-review RH (fan-out)")
 
         def place_option_order(self, order):
             raise AssertionError("mismatched LIVE_VARIANT_ID must block place")
@@ -977,8 +977,9 @@ def test_variant_monitor_does_not_place_when_live_variant_id_mismatched(
         variant_monitor=True,
         variant_id="xsp_lane_a_v2_easy_tp",
     )
-    assert out[0]["live"] is False
-    assert "review" in out[0]
+    assert len(out) == 1
+    assert out[0]["skipped"] == "variant_monitor_not_promoted"
+    assert "review" not in out[0]
     assert "placed" not in out[0]
 
 
@@ -1009,11 +1010,15 @@ def test_dry_run_kill_switch_blocks_place(monkeypatch):
 
 def test_exit_ref_id_is_deterministic():
     uid = "11111111-1111-1111-1111-111111111111"
-    a = _exit_ref_id(uid, "2026-07-07", "time_stop")
-    b = _exit_ref_id(uid, "2026-07-07", "time_stop")
-    c = _exit_ref_id(uid, "2026-07-08", "time_stop")
+    am = datetime(2026, 7, 7, 10, 0, tzinfo=ET)
+    pm = datetime(2026, 7, 7, 14, 0, tzinfo=ET)
+    a = _exit_ref_id(uid, "2026-07-07", "time_stop", now_et=am)
+    b = _exit_ref_id(uid, "2026-07-07", "time_stop", now_et=am)
+    c = _exit_ref_id(uid, "2026-07-08", "time_stop", now_et=am)
+    d = _exit_ref_id(uid, "2026-07-07", "time_stop", now_et=pm)
     assert a == b
     assert a != c
+    assert a != d  # unfilled morning GFD can re-try afternoon
 
 
 def test_dry_run_canary_runs_with_no_alerts(monkeypatch):

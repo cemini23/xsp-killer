@@ -15,6 +15,7 @@ from xsp_killer.macro_weather_notes import (
     load_k158_notes,
     load_k161_notes,
     load_k162_notes,
+    load_k167_notes,
 )
 
 
@@ -279,6 +280,70 @@ def test_build_monitor_macro_weather_extras_k161_k162_from_prod_config():
     assert extras["sentiment_capitulation"]["yen_hedge_narrative_only"] is True
 
 
+def test_load_k167_notes_prod_config():
+    notes = load_k167_notes()
+    assert notes.get("version") == "2026-07-15"
+    assert notes["oil_vs_2yr"]["flag"] == "oil_up_2yr_down_divergence"
+    assert notes["oil_vs_2yr"]["overnight_posture"] == "tighten"
+    assert notes["sox_mu_bounce"]["no_chase_overnight"] is True
+    assert notes["moontower_volga"]["no_auto_structure"] is True
+    assert notes["moontower_volga"]["lane"] == "B"
+    assert notes["software_igv"]["context_only"] is True
+    assert "soft_cpi" in notes
+
+
+def test_build_monitor_macro_weather_extras_includes_k167(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k167": {
+                    "version": "2026-07-15",
+                    "oil_vs_2yr": {
+                        "flag": "oil_up_2yr_down_divergence",
+                        "overnight_posture": "tighten",
+                    },
+                    "sox_mu_bounce": {"no_chase_overnight": True},
+                    "soft_cpi": {"note": "soft CPI context"},
+                    "moontower_volga": {
+                        "lane": "B",
+                        "no_auto_structure": True,
+                    },
+                    "software_igv": {"context_only": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k167_notes=load_k167_notes(cfg),
+        notes_path=cfg,
+    )
+    assert extras is not None
+    assert extras["k167_version"] == "2026-07-15"
+    assert extras["oil_vs_2yr"]["flag"] == "oil_up_2yr_down_divergence"
+    assert extras["sox_mu_bounce"]["no_chase_overnight"] is True
+    assert extras["moontower_volga"]["no_auto_structure"] is True
+    assert extras["software_igv"]["context_only"] is True
+
+
+def test_build_monitor_macro_weather_extras_k167_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    assert extras is not None
+    assert extras["k167_version"] == "2026-07-15"
+    assert extras["oil_vs_2yr"]["overnight_posture"] == "tighten"
+    assert extras["moontower_volga"]["no_auto_structure"] is True
+    assert extras["sox_mu_bounce"]["no_chase_overnight"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -297,8 +362,11 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k158_version"] == "2026-07-11"
     assert report.macro_weather_extras["k161_version"] == "2026-07-13"
     assert report.macro_weather_extras["k162_version"] == "2026-07-13"
+    assert report.macro_weather_extras["k167_version"] == "2026-07-15"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
     assert "sentiment_capitulation" in report.macro_weather_extras
+    assert "oil_vs_2yr" in report.macro_weather_extras
+    assert "moontower_volga" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

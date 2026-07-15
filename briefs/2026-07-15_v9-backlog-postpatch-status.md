@@ -45,6 +45,19 @@
 | — | RH Agentic OAuth on **David's** account; `rh_mcp_health.py` until pin check green | David |
 | — | Keep `LIVE_ENTRIES=false` / `LIVE_EXITS=false` | Both |
 
+## Prod-briefs CODE plan (2026-07-15) — **Done**
+
+Plan: `briefs/2026-07-15_prod-briefs-xsp-code-plan.md`. Safe CODE only; no `LIVE_*` flips; no Bonsai/Undici on RH path.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | Lane A⅔ mid-tenor ~80 DTE | **Done** | Active `v2_mid_tenor_80dte_atm` (`dte_max: 90` variant-only); capacity via `v2_28dte_green_day` off |
+| 2 | K167 log-only macro weather | **Done** | `k167` YAML + `load_k167_notes` + monitor extras; brief `xsp-2026-07-15_k167-…` |
+| 3 | 55/60 DTE collision | **Done** | `v2_dip_swing_55dte_otm` (and 60 path) `dte_max: 65`; stagger tests updated |
+| 4 | K168 Bonsai/Undici | **Done** | Watch-only note in `docs/rh_mcp_claudio.md` + strategy diagnosis — **no order-path dep** |
+
+Baseline `config/lane_a_rules.yaml` `dte_max: 60` **unchanged**.
+
 ## Verdict (unchanged)
 
 **NO-GO live RH writes.** Paper soak on VPS **GO**. David path tomorrow: **reads-only** after token path + pin check, then stop.

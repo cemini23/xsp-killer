@@ -85,3 +85,25 @@ k162:
     gold_models_turning_up: context_only
     yen_hedge_narrative_only: true
     no_chase_spmo_semis_into_lane_a_overnight: true
+
+# K167 — Macro Charts SOX/CPI/oil–2YR + Moontower volga (log-only; extends K155).
+k167:
+  version: "2026-07-15"
+  oil_vs_2yr:
+    flag: oil_up_2yr_down_divergence
+    overnight_posture: tighten  # prefer tighter overnight until 2YR trend clarifies
+    note: "log oil↑ vs 2YR↓ as risk-regime flag; not an auto block"
+  sox_mu_bounce:
+    crowd_bounce: watch
+    no_chase_overnight: true
+    note: "SOX/MU bounce ≠ chase crowded semis/memory into Lane A overnight (pair K162)"
+  soft_cpi:
+    note: "soft CPI is supportive disinflation context; still require cross-asset confirms before size-up"
+  moontower_volga:
+    framing: vega_neutral_iron_butterfly_long_volga
+    lane: B  # mental model for Lane B LEAPS / vol sensitivity only
+    no_auto_structure: true
+    note: "volga = second-order vol mental model; no auto multi-leg structure"
+  software_igv:
+    context_only: true
+    note: "software/IGV strength after IBM wipe is supportive context, not a RH software sleeve"

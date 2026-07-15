@@ -30,6 +30,10 @@ Rules today: entry 15:45–16:00 ET, `dte_min: 14` / `dte_max: 60`, `dte_pick: m
 4. **Lane B gap** — 9/30 (~2.5 mo) is between Lane A max 60 DTE and Lane B LEAPS (>180). If mentor routinely uses **monthly–quarterly** XSP calls as “core,” we should either stretch Lane A `dte_max` / add a mid-tenor variant, or document a **Lane A⅔** sleeve — do not silently merge into overnight rules.
 5. **Next check with mentor (optional ask):** Is 7/16 a discretionary scalp / lottery, or part of the teachable system? Is 9/30 the “real” swing book we should shadow more than 14 DTE min-pick?
 
+## CODE follow-up (2026-07-15)
+
+**Lane A⅔** shadow shipped as active variant `v2_mid_tenor_80dte_atm` (`dte_target: 80`, **`dte_max: 90` override only** — baseline overnight `lane_a_rules.yaml` stays `dte_max: 60`). Capacity: deactivated `v2_28dte_green_day`. Docs: `docs/lane-a-brief.md`, `docs/lane-a-strategy-diagnosis.md`.
+
 ## Do not
 
 - Flip `LIVE_*` / RH place from this screenshot alone (audit-v9 still NO-GO live writes).

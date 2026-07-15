@@ -173,7 +173,7 @@ variants:
         require_upper_bb_for_take_profit: false
 
   v2_28dte_green_day:
-    active: true
+    active: false  # capacity 2026-07-15: freed for v2_mid_tenor_80dte_atm (Lane A⅔ mentor sleeve)
     description: "28 DTE ATM, prior-day SPY green required"
     overrides:
       logging:
@@ -504,6 +504,9 @@ variants:
       entry:
         dte_pick: target
         dte_target: 55
+        # Variant-only: allow next Friday beyond baseline dte_max=60 so 55≠60
+        # when both targets soak (baseline overnight sleeve stays at 60).
+        dte_max: 65
         strike_pick: otm_one
         regime_gate: DIP_BOUNCE
         prior_day_spy_positive: false
@@ -531,6 +534,7 @@ variants:
       entry:
         dte_pick: target
         dte_target: 60
+        dte_max: 65  # same window as 55dte so re-enable can stagger vs 55
         strike_pick: otm_one
         regime_gate: DIP_BOUNCE
         prior_day_spy_positive: false
@@ -548,6 +552,33 @@ variants:
         require_upper_bb_for_take_profit: false
         swing_hold: true
         max_hold_dte: 2
+
+  # --- Lane A⅔ mid-tenor (mentor 9/30 class, ~75–90 DTE) ---
+  # Between overnight Lane A (dte_max 60) and Lane B LEAPS (≥180). Does NOT
+  # raise baseline lane_a_rules.yaml — dte_max 90 is variant override only.
+  # Capacity: active in place of v2_28dte_green_day (pruned 2026-07-15).
+  v2_mid_tenor_80dte_atm:
+    active: true
+    description: "Lane A⅔ mid-tenor ~80 DTE ATM — mentor monthly–quarterly swing shadow"
+    overrides:
+      logging:
+        logic_version: xsp_lane_a_v2_mid_tenor_80dte_atm
+      entry:
+        dte_pick: target
+        dte_target: 80
+        dte_min: 70
+        dte_max: 90
+        strike_pick: atm_only
+        prior_day_spy_positive: false
+      paper_entry:
+        quantity: 1
+        max_open_positions: 2
+      exit:
+        take_profit_pct: 0.40
+        stop_loss_pct: 0.50
+        require_upper_bb_for_take_profit: false
+        swing_hold: true
+        max_hold_dte: 5
 
   # Debit-spread prototype (audit Phase D / fusion): same dip-bounce entry as the
   # 14dte flagship, but logs debit_spread_shadow economics (net debit, capped

@@ -53,3 +53,7 @@ cd /opt/xsp-killer
 sudo bash scripts/install_systemd.sh
 sudo systemctl daemon-reload
 ```
+
+## K168 watch — Bonsai / Undici (no RH order path)
+
+Bonsai-demo (local ternary / low-bit LLM) and Undici (Node HTTP dispatcher/pooling) are **eval and future REST hedges only**. Do **not** install them as a dependency of Robinhood order placement, grant/review, or `LIVE_*` place paths. Optional offline brief/sentiment eval is out of band; pin/soak any REST client swap before global use. **No live RH code from K168.**

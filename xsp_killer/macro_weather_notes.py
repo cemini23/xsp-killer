@@ -41,6 +41,11 @@ def load_k162_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k162")
 
 
+def load_k167_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K167 Macro Charts SOX/CPI/oil–2YR + Moontower volga notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k167")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -85,9 +90,10 @@ def build_monitor_macro_weather_extras(
     k158_notes: dict[str, Any] | None = None,
     k161_notes: dict[str, Any] | None = None,
     k162_notes: dict[str, Any] | None = None,
+    k167_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155/K158/K161/K162 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155/K158/K161/K162/K167 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -96,6 +102,7 @@ def build_monitor_macro_weather_extras(
     k158 = k158_notes if k158_notes is not None else load_k158_notes(path)
     k161 = k161_notes if k161_notes is not None else load_k161_notes(path)
     k162 = k162_notes if k162_notes is not None else load_k162_notes(path)
+    k167 = k167_notes if k167_notes is not None else load_k167_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -140,6 +147,18 @@ def build_monitor_macro_weather_extras(
         extras["k162_version"] = k162.get("version")
         if "sentiment_capitulation" in k162:
             extras["sentiment_capitulation"] = k162["sentiment_capitulation"]
+
+    if k167:
+        extras["k167_version"] = k167.get("version")
+        for key in (
+            "oil_vs_2yr",
+            "sox_mu_bounce",
+            "soft_cpi",
+            "moontower_volga",
+            "software_igv",
+        ):
+            if key in k167:
+                extras[key] = k167[key]
 
     return extras
 

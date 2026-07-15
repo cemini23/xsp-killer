@@ -41,10 +41,12 @@ def test_load_variant_specs():
     assert "v2_yellow_top_quartile_bounce" in ids
     assert "v2_yellow_mid_bounce" in ids
     active_ids = {s.variant_id for s in specs if s.active}
-    # 12 keepers + v2_dip_swing_55dte_otm (v9 P2 #15 single far-DTE shadow)
+    # 12 keepers + 55dte OTM + mid-tenor Lane A⅔; capacity via green_day prune
     assert len(active_ids) == 13
     assert "v2_yellow_mid_bounce" in active_ids
     assert "v2_dip_swing_55dte_otm" in active_ids
+    assert "v2_mid_tenor_80dte_atm" in active_ids
+    assert "v2_28dte_green_day" not in active_ids
     assert "v2_dip_swing_50dte_otm" not in active_ids
     assert "v2_yellow_top_quartile_bounce" not in active_ids
     assert "v2_21dte_atm" not in active_ids
@@ -103,6 +105,7 @@ def test_merged_rules_operator_target_dte_stagger(tmp_path):
     """45–60 DTE OTM stagger grid matches operator dip-swing profile.
 
     v9 P2 #15: only 55dte OTM re-enabled as single far-DTE shadow; 45/50/60 stay off.
+    55/60 carry variant-only dte_max=65 so next Friday beyond baseline 60 is eligible.
     """
     import yaml
 
@@ -130,6 +133,29 @@ def test_merged_rules_operator_target_dte_stagger(tmp_path):
         assert data["paper_entry"]["max_open_positions"] == 2
         assert data["exit"]["swing_hold"] is True
         assert data["ta"]["entry"]["mode"] == "bb_bounce"
+        if dte in (55, 60):
+            assert data["entry"]["dte_max"] == 65
+        else:
+            assert data["entry"]["dte_max"] == 60  # baseline overnight sleeve
+
+
+def test_merged_rules_mid_tenor_lane_a_two_thirds(tmp_path):
+    """Lane A⅔ mid-tenor: ~80 DTE, dte_max 90 variant-only (not baseline overnight)."""
+    import yaml
+
+    specs = load_variant_specs()
+    spec = next(s for s in specs if s.variant_id == "v2_mid_tenor_80dte_atm")
+    assert spec.active is True
+    data = yaml.safe_load(
+        merged_rules_path(spec, tmp_dir=tmp_path).read_text(encoding="utf-8")
+    )
+    assert data["entry"]["dte_pick"] == "target"
+    assert data["entry"]["dte_target"] == 80
+    assert data["entry"]["dte_min"] == 70
+    assert data["entry"]["dte_max"] == 90
+    assert data["entry"]["strike_pick"] == "atm_only"
+    assert data["exit"]["swing_hold"] is True
+    assert data["logging"]["logic_version"] == "xsp_lane_a_v2_mid_tenor_80dte_atm"
 
 
 def test_build_scoreboard(tmp_path):

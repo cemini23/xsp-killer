@@ -4,6 +4,15 @@ Paper mode stays default. This runbook covers **readiness → connect → live e
 
 Canonical plan: `briefs/2026-06-29_xsp-robinhood-agentic-mcp-connection-cemini-prod.md`
 
+## Operator split (read this first)
+
+| Who | Doc | Host | Token path |
+|-----|-----|------|------------|
+| **Claudio** (cemini-prod) | [`rh_mcp_claudio.md`](rh_mcp_claudio.md) | Linux VPS `/opt/xsp-killer` | `/opt/xsp-killer/.local/robinhood_mcp_token.json` |
+| **David** (operator RH) | [`rh_mcp_david.md`](rh_mcp_david.md) | Windows | `%LOCALAPPDATA%\xsp-killer\robinhood_mcp_token.json` (**not** OneDrive) |
+
+**Never** share Agentic account ids or OAuth tokens across operators. Each person authenticates **their** Robinhood Agentic account.
+
 ## Current posture (paper)
 
 | Env | Default | Meaning |

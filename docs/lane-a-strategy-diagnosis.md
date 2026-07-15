@@ -1,82 +1,77 @@
-# Lane A strategy diagnosis (2026-06-29)
+# Lane A strategy diagnosis (refreshed 2026-07-15)
 
-## Post-patch fixes
+## Current posture
 
-| Issue | Fix | Code location |
-|-------|-----|---------------|
-| same-day `time_stop` | Only fire when `entry_date_et < today` and `now >= sell_deadline_et` | `lane_a_monitor.evaluate_exit_alerts` |
-| half-step OTM strikes | `pick_strike` mode `otm_one` uses `atm + 5.0` (one XSP strike step) | `lane_a_entry.py` |
-| fallback premium scale | `estimate_fallback_premium` scales OTM by `0.55–1.0` based on steps from ATM | `lane_a_entry.py` |
-| prior-day SPY filter | `fetch_spy_ohlcv` returns prior-day close-to-close return; variants can require `prior_day_spy_positive: true` | `lane_a_entry.py` |
+| Mode | Status |
+|------|--------|
+| Paper soak (VPS) | **GO** — primary measurement path |
+| Live RH entries/exits | **NO-GO** — keep `LIVE_ENTRIES=false` / `LIVE_EXITS=false` |
+| Strategy pivot | **Dip-swing** cluster + session-open exits (not clock-gated morning cut) |
 
-## What was going wrong (original issues)
+## Pivot: dip-swing + session-open exits
 
-### P0 — same-day time_stop (fixed)
-`evaluate_exit_alerts` fired `time_stop` whenever `now >= 10:00 ET` with **no check that entry was on a prior day**. A 3:45 PM entry was closed 23s later at −$202 (economics) despite only −0.3% underlying move.
+### Entry thesis
+- **Dip-bounce** (`regime_gate: DIP_BOUNCE`): BB bounce + VWAP reclaim; not GREEN-only close-window only.
+- Active keepers include `v2_dip_swing_14dte*`, `v2_dip_swing_21dte*`, plus legacy DTE/ATM/yellow-bounce shadows.
+- **Far-DTE OTM operator thesis:** one re-enabled shadow `v2_dip_swing_55dte_otm` (v9 P2 #15). 45/50/60 DTE OTM remain **inactive** to avoid confounded multi-bucket load.
 
-**Fix:** `time_stop` only when `entry_date_et < today` and `now >= sell_deadline_et`.
+### Exit thesis (session-open)
+- Exit whenever Cboe XSP is tradeable (**GTH / RTH / curb**), when TP / SL / BB conditions hit.
+- **No** clock sell / no-sell window; daily morning `time_stop` removed.
+- Swing-hold near-expiry cut via `max_hold_dte` only.
+- **GTH liquidity (v9 P1 #13):** limit price off **bid** outside RTH; wide spread `(ask-bid)/ask > 0.25` **vetoes take-profit** (stop-loss may still fire, priced at bid).
 
-### P1 — DTE always minimum (14)
-`pick_expiration` sorted ascending and took the **shortest** eligible expiry. That maximizes gamma/theta — bad for overnight holds. Recent trades: 14 DTE, ~$61 premium, essentially ATM.
+### Conductor shadow vs DIP_BOUNCE
+- `conductor_shadow` blocks day-after SPY &lt; −1.5% (and RED regime) — can **starve** dip-bounce entries.
+- Telemetry exposes `conductor_shadow_skip_count` vs `dip_bounce_sessions` (v9 P1 #14).
 
-### P1 — strike selection
-`cheapest_near_atm` scans ATM ±5 index points. Recent SPY ~747 → strike 7500 (ATM). Not clearly too far OTM or ITM; the bigger issue was **holding period never happened** due to time_stop bug.
+## Prune state (2026-07-13 focus prune + v9 follow-up)
 
-### P1 — exit conjunction
-Take-profit needs +20% **and** upper BB touch **and** morning window. Most exits will be `time_stop` or `stop_loss`. Variants test `require_upper_bb_for_take_profit: false`.
+Pruned as **identical-book clones** or starved far-DTE (see `config/lane_a_variants.yaml` comments):
 
-### P1 — prior-day filter off
-`prior_day_spy_positive: false` — entries on red prior days (e.g. −1.37% SPY) still allowed.
+| Variant | Why inactive |
+|---------|----------------|
+| `v2_28dte_cheapest` | Clone of `v2_28dte_atm` |
+| `v2_28dte_wide_sl` | Clone of `v2_28dte_easy_tp` |
+| `v2_yellow_top_quartile_bounce` | Clone of `v2_yellow_mid_bounce` |
+| `v2_dip_swing_14dte_loose` / `30dte` | Identical / capacity prune |
+| `v2_dip_swing_{45,50,60}dte_otm` | Far-DTE OTM; **55 only** re-enabled for single-bucket shadow |
+| Older ATM 35/45/60 nets | Prior soak negatives under **old** exit regime |
 
-## Variant soak (parallel shadows)
+Promotion reporting **collapses confounded clone families** so eligible-review lists do not triple-count one book (`promotion_summary.clone_families`).
 
-Config: `config/lane_a_variants.yaml`
+## Historical bugs (still relevant context)
 
-| Variant | DTE | Strike | Exit tweaks |
-|---------|-----|--------|-------------|
-| `v2_28dte_atm` | target 28 | ATM only | no BB required for TP |
-| `v2_45dte_otm` | target 45 | 1-step OTM | 25% SL / 15% TP |
-| `v2_14dte_green_day` | min 14 | cheapest near ATM | prior-day SPY green required |
-| `v2_60dte_atm` | max 60 | ATM only | 15% SL / 10% TP |
+| Issue | Fix | Location |
+|-------|-----|----------|
+| same-day `time_stop` | Removed clock forced cut; session-open only | `evaluate_exit_alerts` |
+| half-step OTM | `otm_one` → ATM + 5.0 XSP | `lane_a_entry.pick_strike` |
+| fallback premium | OTM scale by steps from ATM | `estimate_fallback_premium` |
+| prior-day SPY | Optional filter; dip-swing often `false` | entry rules |
+| zero-mark / stale TP | SL fires on stale; TP suppressed | `mark_quote_stale` |
 
-Production baseline unchanged (`lane_a_rules.yaml` + existing briefs).
+## Variant soak ops
 
-**Run:**
 ```bash
-python3 scripts/lane_a_variants.py entry    # after close (also in entry cron)
-python3 scripts/lane_a_variants.py monitor  # morning (also in monitor cron)
+python3 scripts/lane_a_variants.py entry
+python3 scripts/lane_a_variants.py monitor
 python3 scripts/lane_a_variants.py scoreboard
 ```
 
 Scoreboard: `briefs/xsp-lane-a-variants-scoreboard.json`
 
-## Regime gate experiment (yellow bounce axis)
+### Regime gate experiment (still tracked)
 
-Side-by-side comparison of baseline GREEN-only vs YELLOW bounce brackets.
+| Variant | Regime gate | Track family |
+|---------|-------------|--------------|
+| `v2_baseline_prod` | `GREEN` | `baseline_green` |
+| `v2_yellow_mid_bounce` | `GREEN_OR_YELLOW_BOUNCE` | `yellow_bounce_frac_axis` |
+| dip-swing keepers | `DIP_BOUNCE` | (dip-swing cluster) |
 
-| Variant | Regime gate | Yellow frac min | Track family |
-|---------|-------------|-----------------|--------------|
-| `v2_baseline_prod` | `GREEN` | N/A | `baseline_green` |
-| `v2_yellow_mid_bounce` | `GREEN_OR_YELLOW_BOUNCE` | 0.50 | `yellow_bounce_frac_axis` |
-| `v2_yellow_top_quartile_bounce` | `GREEN_OR_YELLOW_BOUNCE` | 0.75 | `yellow_bounce_frac_axis` |
+**Promotion:** WAIT until ≥20 post-epoch sessions **and** ≥20 closed trades; Wilson LB vs breakeven; no confounded clone double-count.
 
-**Metrics tracked per variant:**
-- `regime_gate_comparison` — scoreboard section comparing baseline + both yellow variants
-- `bb_bounce_signal_sessions` — sessions where BB bounce signal was present
-- `bb_bounce_blocked_by_regime_sessions` — sessions where bounce was blocked by regime filter
-- `vol_shadow_would_block_sessions` — shadow SPY RV gate would block (log-only, not enforcing)
-- `vol_shadow_latest_spy_rv` / `vol_shadow_avg_spy_rv` — shadow vol telemetry on scoreboard rows
+## Stale / GTH paper marks
 
-**Promotion policy:** WAIT until ≥20 post-epoch sessions per variant before considering production promotion.
-
-## Soak gate
-
-Compare `realized_pnl_usd` and win rate per variant after **≥20 sessions** before changing production baseline.
-
-## Stale TA data behavior
-
-When evaluation runs outside market hours (weekend, holiday) or when data feed is stale:
-- `ta_snapshot.errors` includes `"stale primary bar (timestamp)"`
-- `ta_snapshot.detail` shows `"stale primary TA data"`
-- Entry is blocked by `in_window` / `in_rth` checks before TA freshness is evaluated
-- This is expected behavior — do not enter on stale data
+- Paper marks use SPY chain proxy (`spy_quote`); prefer **bid** on wide spreads.
+- Overnight GTH paper fills can be optimistic vs live XSP liquidity — treat GTH paper exits as upper bound until live bid/ask soak.
+- Outside hours / empty chain → `mark_quote_stale`; TP vetoed; SL may still fire on clamped mark.

@@ -1127,24 +1127,141 @@ def _build_regime_skip_breakdown(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"variants": variants}
 
 
+# Known confounded clone families (identical or near-identical realized books).
+# Keepers listed first; pruned clones remain for historical scoreboard joins.
+KNOWN_CLONE_FAMILIES: dict[str, list[str]] = {
+    "28dte_atm_book": [
+        "v2_28dte_atm",
+        "v2_28dte_cheapest",  # pruned: identical realized book
+        "v2_28dte_atm_stack3",  # same entry until multi-stack
+    ],
+    "28dte_easy_tp_book": [
+        "v2_28dte_easy_tp",
+        "v2_28dte_wide_sl",  # pruned: identical realized book
+    ],
+    "yellow_bounce_frac_axis": [
+        "v2_yellow_mid_bounce",
+        "v2_yellow_top_quartile_bounce",  # pruned: identical realized book
+    ],
+    "dip_swing_14dte_entry": [
+        "v2_dip_swing_14dte",
+        "v2_dip_swing_14dte_loose",  # pruned: identical entry book
+        "v2_dip_swing_14dte_spread",  # entry clone; spread is log-only shadow
+    ],
+}
+
+
+def _collapse_confounded_clones(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Group confounded clone families so promotion does not triple-count books.
+
+    Collapses:
+    1. Static KNOWN_CLONE_FAMILIES (prune + track_family documentation)
+    2. Dynamic groups sharing identical realized PnL/trades/win_rate (n>=1 trades)
+    """
+    by_id = {str(r.get("variant_id")): r for r in rows if r.get("variant_id")}
+    families: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for family_id, members in KNOWN_CLONE_FAMILIES.items():
+        present = [vid for vid in members if vid in by_id]
+        if len(present) < 2:
+            if present:
+                seen.update(present)
+            continue
+        seen.update(present)
+        # Prefer active/eligible member as representative.
+        rep = present[0]
+        for vid in present:
+            row = by_id[vid]
+            if row.get("promotion_ready") or row.get("edge_confirmed"):
+                rep = vid
+                break
+        families.append(
+            {
+                "family_id": family_id,
+                "members": present,
+                "representative": rep,
+                "source": "known_clone",
+                "note": "confounded — do not promote members independently",
+            }
+        )
+
+    # Dynamic: identical realized book signature among remaining shadow rows.
+    sig_groups: dict[tuple[Any, ...], list[str]] = {}
+    for vid, row in by_id.items():
+        if vid in seen or vid == "v2_baseline_prod":
+            continue
+        trades = int(row.get("trades_closed") or 0)
+        if trades < 1:
+            continue
+        sig = (
+            round(float(row.get("realized_pnl_usd") or 0.0), 2),
+            trades,
+            int(row.get("wins") or 0),
+            int(row.get("losses") or 0),
+            round(float(row.get("win_rate_pct") or 0.0), 1),
+        )
+        sig_groups.setdefault(sig, []).append(vid)
+    for sig, members in sig_groups.items():
+        if len(members) < 2:
+            continue
+        members_sorted = sorted(members)
+        families.append(
+            {
+                "family_id": f"identical_book:{members_sorted[0]}",
+                "members": members_sorted,
+                "representative": members_sorted[0],
+                "source": "identical_realized_book",
+                "signature": {
+                    "realized_pnl_usd": sig[0],
+                    "trades_closed": sig[1],
+                    "wins": sig[2],
+                    "losses": sig[3],
+                    "win_rate_pct": sig[4],
+                },
+                "note": "confounded — identical realized book in soak",
+            }
+        )
+        seen.update(members_sorted)
+
+    collapsed_ids = {f["representative"] for f in families}
+    confounded_non_rep = {
+        m for f in families for m in f["members"] if m != f["representative"]
+    }
+    return {
+        "families": families,
+        "confounded_variant_ids": sorted(confounded_non_rep),
+        "representatives": sorted(collapsed_ids),
+    }
+
+
 def _build_promotion_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    eligible = [
+    clone_collapse = _collapse_confounded_clones(rows)
+    confounded = set(clone_collapse.get("confounded_variant_ids") or [])
+    eligible_raw = [
         r["variant_id"]
         for r in rows
         if r.get("promotion_ready") and r.get("variant_id") != "v2_baseline_prod"
     ]
+    # Collapse: drop confounded non-representatives from eligible list.
+    eligible = [vid for vid in eligible_raw if vid not in confounded]
     collecting = sum(1 for r in rows if r.get("promotion_status") == "collecting")
     edge_confirmed = [
         r["variant_id"]
         for r in rows
-        if r.get("edge_confirmed") and r.get("variant_id") != "v2_baseline_prod"
+        if r.get("edge_confirmed")
+        and r.get("variant_id") != "v2_baseline_prod"
+        and r.get("variant_id") not in confounded
     ]
     return {
         "sessions_gate": PROMOTION_SESSIONS_GATE,
         "entered_sessions_gate": PROMOTION_ENTERED_SESSIONS_GATE,
         "variants_collecting": collecting,
         "variants_eligible_review": eligible,
+        "variants_eligible_review_raw": eligible_raw,
         "variants_edge_confirmed": edge_confirmed,
+        "clone_families": clone_collapse.get("families") or [],
+        "confounded_variant_ids": clone_collapse.get("confounded_variant_ids") or [],
         "baseline_promotion_ready": bool(
             next(
                 (r for r in rows if r.get("variant_id") == "v2_baseline_prod"),
@@ -1435,7 +1552,17 @@ def build_scoreboard(
                 "regime_counts": tel.get("regime_counts") or {},
                 "evals_total": tel.get("evals_total", 0),
                 "entered_sessions": tel.get("entered_sessions", 0),
+                "conductor_shadow_skip_count": tel.get(
+                    "conductor_shadow_skip_count", 0
+                ),
+                "dip_bounce_sessions": tel.get("dip_bounce_sessions", 0),
             }
+        # Surface DIP_BOUNCE starvation even when skip_reason_counts is empty.
+        if str(row.get("regime_gate") or "").upper() == "DIP_BOUNCE":
+            row["conductor_shadow_skip_count"] = tel.get(
+                "conductor_shadow_skip_count", 0
+            )
+            row["dip_bounce_sessions"] = tel.get("dip_bounce_sessions", 0)
         exit_shadow = _exit_shadow_summary(state, soak_reset_at)
         if exit_shadow is not None:
             row["exit_shadow"] = exit_shadow

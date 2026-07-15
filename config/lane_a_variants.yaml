@@ -492,8 +492,11 @@ variants:
         swing_hold: true
         max_hold_dte: 2
 
+  # v9 P2 #15 — re-enable ONE far-DTE OTM shadow (~55 DTE operator aspirational)
+  # under session-open exits. Leave 45/50/60 inactive so DTE is not confounded
+  # with multi-bucket capacity load. 55 preferred over 50 as operator target.
   v2_dip_swing_55dte_otm:
-    active: false  # pruned 2026-07-13: 0 entries / starved (far-DTE OTM)
+    active: true  # re-enabled 2026-07-15: single 50–55 DTE OTM shadow (operator thesis)
     description: "Operator target: dip-swing ~55 DTE one-strike OTM, 2ct, TP +40% / SL -50%"
     overrides:
       logging:

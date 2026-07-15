@@ -637,6 +637,33 @@ def _representative_session_row(session_rows: list[dict[str, Any]]) -> dict[str,
     return entered or ordered[-1]
 
 
+def count_conductor_shadow_dip_bounce(
+    entry_logs: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Measure conductor_shadow starvation of DIP_BOUNCE variants (v9 P1 #14).
+
+    Counts ET sessions where ``regime_gate`` is DIP_BOUNCE and the representative
+    outcome is a conductor_shadow skip. ``dip_bounce_sessions`` is the
+    denominator (all DIP_BOUNCE sessions in the log set).
+    """
+    dip_bounce_sessions = 0
+    conductor_shadow_skip_count = 0
+    for _, session_rows in _session_rows_by_et_date(entry_logs):
+        row = _representative_session_row(session_rows)
+        gate = str(row.get("regime_gate") or "").strip().upper()
+        if gate != "DIP_BOUNCE":
+            continue
+        dip_bounce_sessions += 1
+        if row.get("entered"):
+            continue
+        if _bucket_skip_reason(row.get("skip_reason")) == "conductor_shadow":
+            conductor_shadow_skip_count += 1
+    return {
+        "conductor_shadow_skip_count": conductor_shadow_skip_count,
+        "dip_bounce_sessions": dip_bounce_sessions,
+    }
+
+
 def summarize_entry_telemetry_from_logs(
     entry_logs: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -663,6 +690,7 @@ def summarize_entry_telemetry_from_logs(
         else:
             bucket = _bucket_skip_reason(row.get("skip_reason"))
         skip_reason_counts[bucket] = skip_reason_counts.get(bucket, 0) + 1
+    dip_bounce = count_conductor_shadow_dip_bounce(entry_logs)
     return {
         "last_updated_at": last_updated_at,
         "skip_reason_counts": skip_reason_counts,
@@ -670,6 +698,8 @@ def summarize_entry_telemetry_from_logs(
         "evals_total": evals_total,
         "sessions_evaluated": len(unique_et_sessions(entry_logs)),
         "entered_sessions": entered_sessions,
+        "conductor_shadow_skip_count": dip_bounce["conductor_shadow_skip_count"],
+        "dip_bounce_sessions": dip_bounce["dip_bounce_sessions"],
     }
 
 
@@ -696,6 +726,8 @@ def _write_entry_telemetry_brief(
         "entered_sessions": tel.get("entered_sessions", 0),
         "skip_reason_counts": tel.get("skip_reason_counts") or {},
         "regime_counts": tel.get("regime_counts") or {},
+        "conductor_shadow_skip_count": tel.get("conductor_shadow_skip_count", 0),
+        "dip_bounce_sessions": tel.get("dip_bounce_sessions", 0),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

@@ -9,6 +9,8 @@ import xsp_killer.lane_a_entry as lane_a_entry
 from xsp_killer.lane_a_ta import TaSignal
 from xsp_killer.lane_a_variants import (
     VariantSpec,
+    _build_promotion_summary,
+    _collapse_confounded_clones,
     build_scoreboard,
     clear_pnl_epoch,
     load_variant_specs,
@@ -39,8 +41,11 @@ def test_load_variant_specs():
     assert "v2_yellow_top_quartile_bounce" in ids
     assert "v2_yellow_mid_bounce" in ids
     active_ids = {s.variant_id for s in specs if s.active}
-    assert len(active_ids) == 12
+    # 12 keepers + v2_dip_swing_55dte_otm (v9 P2 #15 single far-DTE shadow)
+    assert len(active_ids) == 13
     assert "v2_yellow_mid_bounce" in active_ids
+    assert "v2_dip_swing_55dte_otm" in active_ids
+    assert "v2_dip_swing_50dte_otm" not in active_ids
     assert "v2_yellow_top_quartile_bounce" not in active_ids
     assert "v2_21dte_atm" not in active_ids
 
@@ -97,17 +102,26 @@ def test_merged_rules_stack3_variant(tmp_path):
 def test_merged_rules_operator_target_dte_stagger(tmp_path):
     """45–60 DTE OTM stagger grid matches operator dip-swing profile.
 
-    Pruned inactive 2026-07-13 (0 entries / starved); rules stay wired for
-    re-enable if 21dte_otm confirms with more sample.
+    v9 P2 #15: only 55dte OTM re-enabled as single far-DTE shadow; 45/50/60 stay off.
     """
     import yaml
 
     specs = load_variant_specs()
-    targets = {45: "v2_dip_swing_45dte_otm", 50: "v2_dip_swing_50dte_otm", 55: "v2_dip_swing_55dte_otm", 60: "v2_dip_swing_60dte_otm"}
+    targets = {
+        45: "v2_dip_swing_45dte_otm",
+        50: "v2_dip_swing_50dte_otm",
+        55: "v2_dip_swing_55dte_otm",
+        60: "v2_dip_swing_60dte_otm",
+    }
     for dte, vid in targets.items():
         spec = next(s for s in specs if s.variant_id == vid)
-        assert not spec.active
-        data = yaml.safe_load(merged_rules_path(spec, tmp_dir=tmp_path).read_text(encoding="utf-8"))
+        if dte == 55:
+            assert spec.active is True
+        else:
+            assert not spec.active
+        data = yaml.safe_load(
+            merged_rules_path(spec, tmp_dir=tmp_path).read_text(encoding="utf-8")
+        )
         assert data["entry"]["dte_pick"] == "target"
         assert data["entry"]["dte_target"] == dte
         assert data["entry"]["strike_pick"] == "otm_one"
@@ -1244,6 +1258,52 @@ def test_promotion_meta_eligible_review():
     meta = _promotion_meta(20, 2, 10)
     assert meta["promotion_status"] == "eligible_review"
     assert meta["promotion_ready"] is True
+
+
+def test_collapse_confounded_clones_in_promotion_summary():
+    rows = [
+        {
+            "variant_id": "v2_28dte_atm",
+            "promotion_ready": True,
+            "edge_confirmed": False,
+            "promotion_status": "eligible_review",
+            "trades_closed": 5,
+            "realized_pnl_usd": 10.0,
+            "wins": 3,
+            "losses": 2,
+            "win_rate_pct": 60.0,
+        },
+        {
+            "variant_id": "v2_28dte_cheapest",
+            "promotion_ready": True,
+            "edge_confirmed": False,
+            "promotion_status": "eligible_review",
+            "trades_closed": 5,
+            "realized_pnl_usd": 10.0,
+            "wins": 3,
+            "losses": 2,
+            "win_rate_pct": 60.0,
+        },
+        {
+            "variant_id": "v2_dip_swing_14dte",
+            "promotion_ready": True,
+            "edge_confirmed": True,
+            "promotion_status": "eligible_review",
+            "trades_closed": 8,
+            "realized_pnl_usd": 40.0,
+            "wins": 5,
+            "losses": 3,
+            "win_rate_pct": 62.5,
+        },
+    ]
+    collapse = _collapse_confounded_clones(rows)
+    assert "v2_28dte_cheapest" in collapse["confounded_variant_ids"]
+    summary = _build_promotion_summary(rows)
+    assert "v2_28dte_atm" in summary["variants_eligible_review"]
+    assert "v2_28dte_cheapest" not in summary["variants_eligible_review"]
+    assert "v2_28dte_cheapest" in summary["variants_eligible_review_raw"]
+    assert "v2_dip_swing_14dte" in summary["variants_eligible_review"]
+    assert any(f.get("family_id") == "28dte_atm_book" for f in summary["clone_families"])
 
 
 def test_build_scoreboard_includes_promotion_summary(tmp_path):

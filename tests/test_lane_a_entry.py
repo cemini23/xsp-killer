@@ -12,6 +12,7 @@ from xsp_killer.lane_a_entry import (
     _finalize_entry,
     _write_entry_telemetry_brief,
     already_entered_today,
+    count_conductor_shadow_dip_bounce,
     entry_logs_for_epoch,
     et_session_date,
     in_entry_window,
@@ -304,6 +305,47 @@ def test_bucket_skip_reason_conductor_shadow():
     assert (
         _bucket_skip_reason("conductor_shadow: macro regime RED") == "conductor_shadow"
     )
+
+
+def test_count_conductor_shadow_dip_bounce_starvation():
+    """v9 P1 #14 — measurable conductor_shadow skips under DIP_BOUNCE only."""
+    logs = [
+        {
+            "evaluated_at": "2026-07-14T19:50:00+00:00",
+            "entered": False,
+            "skip_reason": "conductor_shadow: prior-day SPY down >1.5%",
+            "regime_gate": "DIP_BOUNCE",
+            "regime": "GREEN",
+        },
+        {
+            "evaluated_at": "2026-07-15T19:50:00+00:00",
+            "entered": True,
+            "skip_reason": None,
+            "regime_gate": "DIP_BOUNCE",
+            "regime": "GREEN",
+        },
+        {
+            "evaluated_at": "2026-07-16T19:50:00+00:00",
+            "entered": False,
+            "skip_reason": "conductor_shadow: macro regime RED",
+            "regime_gate": "GREEN",  # not DIP_BOUNCE — excluded
+            "regime": "RED",
+        },
+        {
+            "evaluated_at": "2026-07-17T19:50:00+00:00",
+            "entered": False,
+            "skip_reason": "regime YELLOW blocks new risk",
+            "regime_gate": "DIP_BOUNCE",
+            "regime": "YELLOW",
+        },
+    ]
+    stats = count_conductor_shadow_dip_bounce(logs)
+    assert stats["dip_bounce_sessions"] == 3
+    assert stats["conductor_shadow_skip_count"] == 1
+
+    tel = summarize_entry_telemetry_from_logs(logs)
+    assert tel["conductor_shadow_skip_count"] == 1
+    assert tel["dip_bounce_sessions"] == 3
 
 
 def test_bucket_skip_reason_consecutive_losses_risk_gate():

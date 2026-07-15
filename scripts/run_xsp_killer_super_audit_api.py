@@ -39,6 +39,55 @@ def _load_env() -> None:
                 os.environ[k] = v
 
 
+def _extract_message_content(message: dict | None) -> str:
+    """Extract text from OpenAI-style message.content (str, list parts, or null).
+
+    Fusion / tool-using models often return ``content=null`` with ``tool_calls``
+    after burning the completion budget on tool rounds. Multipart content is a
+    list of ``{type, text|...}`` parts — concatenate text pieces.
+    """
+    if not message or not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                if part.strip():
+                    parts.append(part.strip())
+                continue
+            if not isinstance(part, dict):
+                continue
+            # OpenAI / Anthropic-style content parts
+            text = part.get("text") or part.get("content")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+                continue
+            # Nested: {"type":"output_text","output_text":{"text":"..."}}
+            for key in ("output_text", "input_text"):
+                nested = part.get(key)
+                if isinstance(nested, dict):
+                    t = nested.get("text")
+                    if isinstance(t, str) and t.strip():
+                        parts.append(t.strip())
+                elif isinstance(nested, str) and nested.strip():
+                    parts.append(nested.strip())
+        return "\n".join(parts).strip()
+    return str(content).strip()
+
+
+def _strip_fusion_plugins(extra: dict | None) -> dict | None:
+    """Return a copy of extra without fusion plugins / tools for retry."""
+    if not extra:
+        return None
+    cleaned = {k: v for k, v in extra.items() if k not in ("plugins", "tools", "tool_choice")}
+    return cleaned or None
+
+
 def _call_openai_compat(
     *,
     base_url: str,
@@ -47,6 +96,7 @@ def _call_openai_compat(
     prompt: str,
     extra: dict | None = None,
     max_tokens: int = 24000,
+    _retried: bool = False,
 ) -> str:
     import httpx
 
@@ -61,7 +111,8 @@ def _call_openai_compat(
                     "quantitative options math, Robinhood Agentic MCP execution engineer, "
                     "and cemini platform architect. "
                     "Phases A–E: measurement, strategy, bugs, RH order placement (operator account), ops. "
-                    "Follow required output format exactly. Readonly recommendations only."
+                    "Follow required output format exactly. Readonly recommendations only. "
+                    "Respond with the full markdown audit report only — no tool calls."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -81,10 +132,40 @@ def _call_openai_compat(
         )
     r = httpx.post(url, headers=headers, json=body, timeout=900.0)
     r.raise_for_status()
-    content = (r.json()["choices"][0]["message"]["content"] or "").strip()
-    if not content:
-        raise RuntimeError(f"Empty response body from {model}")
-    return content
+    payload = r.json()
+    choice = (payload.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = _extract_message_content(message)
+    if content:
+        return content
+
+    finish_reason = choice.get("finish_reason")
+    usage = payload.get("usage") or {}
+    tool_calls = message.get("tool_calls") or message.get("tool_calls_results")
+    has_tools = bool(tool_calls)
+    # Empty content after tool_calls burned the budget: retry once without
+    # fusion plugins / tools so the model must emit plain text.
+    if not _retried and (has_tools or (extra and "plugins" in extra)):
+        print(
+            f"  WARN {model}: empty content (finish_reason={finish_reason}, "
+            f"tool_calls={has_tools}, usage={usage}); retrying without fusion plugins/tools",
+            flush=True,
+        )
+        return _call_openai_compat(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            prompt=prompt,
+            extra=_strip_fusion_plugins(extra),
+            max_tokens=max_tokens,
+            _retried=True,
+        )
+
+    raise RuntimeError(
+        f"Empty response body from {model}: finish_reason={finish_reason!r}, "
+        f"tool_calls={has_tools}, usage={usage}, "
+        f"message_keys={sorted(message.keys()) if isinstance(message, dict) else type(message)}"
+    )
 
 
 def _model_registry() -> dict[str, tuple[str, str, str, dict | None]]:

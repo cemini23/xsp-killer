@@ -4,6 +4,7 @@ pandas>=2.0
 python-dotenv>=1.0
 pytest>=8.0
 ruff==0.15.5
+portalocker>=2.8
 
 # Optional — only when XSP_LANE_A_RH_POLL=true
 # robin-stocks>=3.0

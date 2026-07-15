@@ -137,6 +137,9 @@ class LaneAPosition:
     delta_at_entry: float | None = None
     entry_mid_premium: float | None = None
     mark_quote_stale: bool = False
+    bid_price: float | None = None
+    ask_price: float | None = None
+    wide_spread: bool = False
     pnl_usd: float | None = None
     pnl_per_contract: float | None = None
 
@@ -316,6 +319,11 @@ def classify_position(
         raw.get("mark_price"), raw.get("mark"), raw.get("adjusted_mark_price")
     )
     mark = float(mark_raw) if mark_raw is not None else None
+    bid_raw = _first_present(raw.get("bid_price"), raw.get("bid"))
+    ask_raw = _first_present(raw.get("ask_price"), raw.get("ask"))
+    bid = float(bid_raw) if bid_raw is not None else None
+    ask = float(ask_raw) if ask_raw is not None else None
+    wide = bool(raw.get("wide_spread")) or is_wide_spread(bid, ask)
     pos_id = str(
         raw.get("id")
         or raw.get("option_id")
@@ -337,6 +345,10 @@ def classify_position(
         entry_mid_premium=float(entry_mid)
         if entry_mid is not None
         else (avg if avg > 0 else None),
+        mark_quote_stale=bool(raw.get("mark_quote_stale")),
+        bid_price=bid,
+        ask_price=ask,
+        wide_spread=wide,
         pnl_usd=None,
         pnl_per_contract=None,
     )
@@ -469,6 +481,76 @@ def xsp_session_open(now: datetime) -> bool:
     return False
 
 
+def xsp_rth_open(now: datetime) -> bool:
+    """True during Cboe XSP regular trading hours 09:30–16:15 ET (Mon–Fri)."""
+    now = now.astimezone(ET) if now.tzinfo else now.replace(tzinfo=ET)
+    if now.weekday() >= 5:
+        return False
+    t = now.time()
+    return time(9, 30) <= t <= time(16, 15)
+
+
+DEFAULT_WIDE_SPREAD_FRAC = 0.25
+
+
+def wide_spread_threshold() -> float:
+    """(ask-bid)/ask threshold for GTH/liquidity veto (env or default 0.25)."""
+    raw = os.getenv("XSP_LANE_A_WIDE_SPREAD_FRAC", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return DEFAULT_WIDE_SPREAD_FRAC
+
+
+def quote_spread_frac(bid: float | None, ask: float | None) -> float | None:
+    """Relative spread (ask-bid)/ask; None when bid/ask unusable."""
+    if bid is None or ask is None or ask <= 0:
+        return None
+    return (ask - bid) / ask
+
+
+def is_wide_spread(
+    bid: float | None,
+    ask: float | None,
+    *,
+    threshold: float | None = None,
+) -> bool:
+    frac = quote_spread_frac(bid, ask)
+    if frac is None:
+        return False
+    return frac > (threshold if threshold is not None else wide_spread_threshold())
+
+
+def position_wide_spread(pos: LaneAPosition, *, threshold: float | None = None) -> bool:
+    """True when position is flagged wide or bid/ask imply wide spread."""
+    if pos.wide_spread:
+        return True
+    return is_wide_spread(pos.bid_price, pos.ask_price, threshold=threshold)
+
+
+def close_limit_price(
+    pos: LaneAPosition,
+    *,
+    now_et: datetime | None = None,
+) -> float | None:
+    """Limit price for sell-to-close: bid outside RTH / on wide spread; else mark.
+
+    GTH/curb liquidity is thin — price off bid when available. Wide-spread
+    quotes also use bid so we do not chase mid. Falls back to mark, then None.
+    """
+    now = now_et or datetime.now(ET)
+    prefer_bid = (not xsp_rth_open(now)) or position_wide_spread(pos)
+    if prefer_bid and pos.bid_price is not None and pos.bid_price > 0:
+        return float(pos.bid_price)
+    if pos.mark_price is not None:
+        return float(pos.mark_price)
+    if pos.bid_price is not None and pos.bid_price > 0:
+        return float(pos.bid_price)
+    return None
+
+
 def in_no_sell_window(now: datetime, rules: LaneRules) -> bool:
     t = now.time()
     return rules.no_sell_start_et <= t < rules.no_sell_end_et
@@ -569,8 +651,10 @@ def evaluate_exit_alerts(
     pnl_c = pos.pnl_per_contract
     pnl = pos.pnl_usd
 
-    # Risk exits must fire even on a stale mark; never bank profit on suspect marks.
-    allow_take_profit = not pos.mark_quote_stale
+    # Risk exits must fire even on a stale mark; never bank profit on suspect
+    # marks or wide GTH spreads. TP veto on wide/stale (paper + live).
+    wide = position_wide_spread(pos)
+    allow_take_profit = not pos.mark_quote_stale and not wide
 
     if ret_pct <= -rules.stop_loss_pct:
         alerts.append(
@@ -681,6 +765,11 @@ def paper_positions_to_lane(
         )
         pos_id = str(raw.get("position_id") or "")
         strike = float(raw.get("strike") or 0)
+        bid_raw = _first_present(raw.get("bid_price"), raw.get("bid"))
+        ask_raw = _first_present(raw.get("ask_price"), raw.get("ask"))
+        bid = float(bid_raw) if bid_raw is not None else None
+        ask = float(ask_raw) if ask_raw is not None else None
+        wide = bool(raw.get("wide_spread")) or is_wide_spread(bid, ask)
         lane_pos = LaneAPosition(
             position_id=pos_id,
             chain_symbol=chain,
@@ -696,6 +785,9 @@ def paper_positions_to_lane(
             delta_at_entry=raw.get("delta_at_entry"),
             entry_mid_premium=entry_mid,
             mark_quote_stale=bool(raw.get("mark_quote_stale")),
+            bid_price=bid,
+            ask_price=ask,
+            wide_spread=wide,
             pnl_usd=None,
             pnl_per_contract=None,
         )
@@ -762,8 +854,20 @@ def refresh_paper_marks(positions: list[dict[str, Any]]) -> list[dict[str, Any]]
             last_mark_xsp=last_mark,
         )
         if quote.exit_mark_xsp is not None:
+            scale = load_premium_scale()
+            bid_xsp = (
+                round(quote.bid_spy * scale, 4) if quote.bid_spy is not None else None
+            )
+            ask_xsp = (
+                round(quote.ask_spy * scale, 4) if quote.ask_spy is not None else None
+            )
+            wide = is_wide_spread(bid_xsp, ask_xsp)
             pos["mark_mid_xsp"] = quote.mark_xsp
+            # Conservative sell mark (bid-preferring on wide spreads) for paper closes.
             pos["mark_price"] = quote.exit_mark_xsp
+            pos["bid_price"] = bid_xsp
+            pos["ask_price"] = ask_xsp
+            pos["wide_spread"] = wide
             pos["mark_quote_stale"] = quote.stale
             pos["mark_stale_reason"] = quote.stale_reason
             pos["spy_row_strike"] = quote.spy_row_strike
@@ -920,8 +1024,13 @@ def _exit_ref_id(
     )
 
 
-def _build_close_order(option_id: str, pos: "LaneAPosition") -> dict[str, Any]:
-    """Sell-to-close legs[] order: limit at mark, market when no mark."""
+def _build_close_order(
+    option_id: str,
+    pos: "LaneAPosition",
+    *,
+    now_et: datetime | None = None,
+) -> dict[str, Any]:
+    """Sell-to-close legs[] order: limit at bid (GTH/wide) or mark; market if none."""
     qty_int = max(1, int(round(pos.quantity or 1)))
     order: dict[str, Any] = {
         "legs": [
@@ -935,9 +1044,10 @@ def _build_close_order(option_id: str, pos: "LaneAPosition") -> dict[str, Any]:
         "quantity": str(qty_int),
         "time_in_force": "gfd",
     }
-    if pos.mark_price is not None:
+    limit = close_limit_price(pos, now_et=now_et)
+    if limit is not None:
         order["type"] = "limit"
-        order["price"] = f"{float(pos.mark_price):.2f}"
+        order["price"] = f"{float(limit):.2f}"
     else:
         order["type"] = "market"
     return order
@@ -1011,7 +1121,22 @@ def dry_run_exit_reviews_via_mcp(
                 }
             )
             continue
-        order = _build_close_order(option_id, pos)
+        # Wide-spread TP veto: do not review/place take-profit into thin books.
+        # Stop-loss may still fire (risk) and prices off bid via _build_close_order.
+        if alert.exit_reason in ("take_profit", "upper_bb_rejection") and position_wide_spread(
+            pos
+        ):
+            reviews.append(
+                {
+                    "position_id": alert.position_id,
+                    "exit_reason": alert.exit_reason,
+                    "skipped": "wide_spread_tp_veto",
+                    "spread_frac": quote_spread_frac(pos.bid_price, pos.ask_price),
+                    "threshold": wide_spread_threshold(),
+                }
+            )
+            continue
+        order = _build_close_order(option_id, pos, now_et=now_et)
         entry: dict[str, Any] = {
             "position_id": alert.position_id,
             "exit_reason": alert.exit_reason,

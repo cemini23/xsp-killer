@@ -10,13 +10,17 @@ from xsp_killer.lane_a_monitor import (
     ExitAlert,
     LaneAPosition,
     LaneRules,
+    _build_close_order,
     _exit_ref_id,
     _real_option_id,
     classify_position,
+    close_limit_price,
     close_paper_positions_on_exit,
     compute_dte,
     dry_run_exit_reviews_via_mcp,
     evaluate_exit_alerts,
+    is_wide_spread,
+    xsp_rth_open,
     xsp_session_open,
     is_lane_a_contract,
     load_state,
@@ -217,6 +221,75 @@ def test_gth_allows_take_profit():
     now = datetime(2026, 6, 16, 8, 45, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, RULES, now_et=now, ta_signal=ta)
     assert any(a.exit_reason in ("take_profit", "upper_bb_rejection") for a in alerts)
+
+
+def test_wide_spread_vetoes_take_profit_not_stop_loss():
+    """(ask-bid)/ask > 0.25 blocks TP; SL still fires (risk)."""
+    pos = classify_position(
+        {**_raw(avg=2.00, mark=2.50), "bid_price": 1.0, "ask_price": 2.0},
+        RULES,
+        today=FIXED_TODAY,
+    )
+    assert pos is not None
+    assert pos.wide_spread is True
+    ta = TaSignal("upper_bb_exit", None, None, False, True, True, "upper touch")
+    now = datetime(2026, 6, 16, 10, 0, tzinfo=ET)  # RTH
+    assert evaluate_exit_alerts(pos, RULES, now_et=now, ta_signal=ta) == []
+
+    pos_sl = classify_position(
+        {**_raw(avg=2.00, mark=1.50), "bid_price": 1.0, "ask_price": 2.0},
+        RULES,
+        today=FIXED_TODAY,
+    )
+    assert pos_sl is not None
+    alerts = evaluate_exit_alerts(pos_sl, RULES, now_et=now)
+    assert any(a.exit_reason == "stop_loss" for a in alerts)
+
+
+def test_gth_close_limit_prices_at_bid():
+    pos = LaneAPosition(
+        position_id="11111111-1111-1111-1111-111111111111",
+        chain_symbol="XSP",
+        option_type="call",
+        strike=6000.0,
+        expiration_date=date(2026, 7, 18),
+        quantity=1.0,
+        average_price=2.0,
+        mark_price=2.50,
+        dte=28,
+        bid_price=2.10,
+        ask_price=2.40,
+    )
+    gth = datetime(2026, 6, 16, 8, 0, tzinfo=ET)
+    assert not xsp_rth_open(gth)
+    assert close_limit_price(pos, now_et=gth) == 2.10
+    order = _build_close_order(pos.position_id, pos, now_et=gth)
+    assert order["type"] == "limit"
+    assert order["price"] == "2.10"
+
+    rth = datetime(2026, 6, 16, 11, 0, tzinfo=ET)
+    assert xsp_rth_open(rth)
+    assert close_limit_price(pos, now_et=rth) == 2.50  # mark mid-path
+
+
+def test_wide_spread_close_limit_uses_bid_even_in_rth():
+    pos = LaneAPosition(
+        position_id="11111111-1111-1111-1111-111111111111",
+        chain_symbol="XSP",
+        option_type="call",
+        strike=6000.0,
+        expiration_date=date(2026, 7, 18),
+        quantity=1.0,
+        average_price=2.0,
+        mark_price=2.50,
+        dte=28,
+        bid_price=1.50,
+        ask_price=2.50,  # 40% spread
+        wide_spread=True,
+    )
+    rth = datetime(2026, 6, 16, 11, 0, tzinfo=ET)
+    assert is_wide_spread(1.50, 2.50)
+    assert close_limit_price(pos, now_et=rth) == 1.50
 
 
 def test_curb_allows_take_profit():

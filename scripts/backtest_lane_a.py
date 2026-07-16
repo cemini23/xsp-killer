@@ -77,6 +77,19 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip injecting v2_baseline_prod",
     )
+    p.add_argument(
+        "--nagus",
+        action="store_true",
+        help=(
+            "Emit Nagus ops state (brain/posts/queue/packets) "
+            "after writing the report"
+        ),
+    )
+    p.add_argument(
+        "--nagus-dry-run",
+        action="store_true",
+        help="Compute + print Nagus emit plan without durable ops writes",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -143,6 +156,21 @@ def main(argv: list[str] | None = None) -> int:
     print_ranking_table(payload)
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
+
+    if args.nagus or args.nagus_dry_run:
+        try:
+            from xsp_killer.ops.emit import emit_from_report
+
+            summary = emit_from_report(
+                payload,
+                report_json=json_path,
+                report_md=md_path,
+                dry_run=bool(args.nagus_dry_run),
+            )
+            print(f"[nagus] {summary}")
+        except Exception as exc:  # fail-open: report already written
+            logger.warning("nagus emit failed (non-fatal): %s", exc)
+
     return 0
 
 

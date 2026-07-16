@@ -116,7 +116,7 @@ On each closed Stage B trade, if any bar within 90 minutes of entry has `ret_pct
 - [x] Plan written
 - [x] Implemented by Grok
 - [x] Tests green
-- [ ] Local commit
+- [x] Local commit
 - [x] Fresh UW entry-time report path documented
 
 ### Operator commands (post-implementation)

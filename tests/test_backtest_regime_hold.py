@@ -1120,7 +1120,11 @@ def test_recommended_yaml_always_inactive_no_live_text():
     text2 = recommended_regime_hold_yaml(row, ov, edge_ok=False, min_trades=8)
     assert "active: false" in text2.lower()
     assert "LIVE_" not in text2
-    # Hold is documented in description, not as unknown live key in overrides dump
+    generated = yaml.safe_load(text)
+    assert (
+        generated[row["variant_id"]]["overrides"]["exit"]["max_hold_sessions"] == 3
+    )
+    # Generation must not mutate the caller's overrides.
     assert "max_hold_sessions" not in (ov.get("exit") or {})
 
 

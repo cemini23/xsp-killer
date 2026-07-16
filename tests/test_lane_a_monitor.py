@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import xsp_killer.lane_a_monitor as lane_a_monitor
 from xsp_killer.lane_a_monitor import (
     ExitAlert,
@@ -1309,3 +1311,79 @@ def test_swing_hold_near_expiry_cut_still_fires():
     now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "time_stop" for a in alerts)
+
+
+def test_lane_rules_parse_optional_nonnegative_max_hold_sessions(tmp_path):
+    path = tmp_path / "rules.yaml"
+    path.write_text("exit:\n  max_hold_sessions: 3\n", encoding="utf-8")
+    assert LaneRules.from_yaml(path).max_hold_sessions == 3
+
+    path.write_text("exit: {}\n", encoding="utf-8")
+    assert LaneRules.from_yaml(path).max_hold_sessions == 0
+
+
+@pytest.mark.parametrize("value", [-1, 1.5, "three"])
+def test_lane_rules_reject_invalid_max_hold_sessions(tmp_path, value):
+    path = tmp_path / "rules.yaml"
+    path.write_text(f"exit:\n  max_hold_sessions: {value!r}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="max_hold_sessions"):
+        LaneRules.from_yaml(path)
+
+
+def test_runtime_hold_cap_fires_on_nth_exchange_session_not_before():
+    rules = dataclasses.replace(RULES, max_hold_sessions=2)
+    pos = _swing_pos(avg=5.0, mark=4.9, dte=20)
+    pos.entry_ts = "2024-07-02T15:45:00-04:00"
+
+    before = evaluate_exit_alerts(
+        pos, rules, now_et=datetime(2024, 7, 3, 12, 0, tzinfo=ET)
+    )
+    on_cap = evaluate_exit_alerts(
+        pos, rules, now_et=datetime(2024, 7, 5, 10, 0, tzinfo=ET)
+    )
+
+    assert before == []
+    assert [alert.exit_reason for alert in on_cap] == ["hold_cap"]
+
+
+def test_runtime_hold_cap_is_disabled_when_zero_or_entry_invalid():
+    pos = _swing_pos(avg=5.0, mark=4.9, dte=20)
+    now = datetime(2024, 7, 5, 10, 0, tzinfo=ET)
+
+    pos.entry_ts = "2024-07-02T15:45:00-04:00"
+    assert evaluate_exit_alerts(
+        pos, dataclasses.replace(RULES, max_hold_sessions=0), now_et=now
+    ) == []
+
+    pos.entry_ts = "not-a-timestamp"
+    assert evaluate_exit_alerts(
+        pos, dataclasses.replace(RULES, max_hold_sessions=1), now_et=now
+    ) == []
+
+
+def test_runtime_exit_precedence_tp_then_time_stop_then_hold_cap():
+    cap_rules = dataclasses.replace(
+        SWING_RULES,
+        max_hold_sessions=1,
+        require_upper_bb_for_take_profit=False,
+    )
+    now = datetime(2024, 7, 5, 10, 0, tzinfo=ET)
+
+    profit = _swing_pos(avg=5.0, mark=7.0, dte=0)
+    profit.entry_ts = "2024-07-02T15:45:00-04:00"
+    assert evaluate_exit_alerts(profit, cap_rules, now_et=now)[0].exit_reason == (
+        "take_profit"
+    )
+
+    expiry = _swing_pos(avg=5.0, mark=4.9, dte=0)
+    expiry.entry_ts = "2024-07-02T15:45:00-04:00"
+    assert evaluate_exit_alerts(expiry, cap_rules, now_et=now)[0].exit_reason == (
+        "time_stop"
+    )
+
+    baseline_expiry = _swing_pos(avg=5.0, mark=4.9, dte=0)
+    baseline_expiry.entry_ts = "2024-07-02T15:45:00-04:00"
+    baseline_rules = dataclasses.replace(RULES, max_hold_sessions=1)
+    assert evaluate_exit_alerts(
+        baseline_expiry, baseline_rules, now_et=now
+    )[0].exit_reason == "time_stop"

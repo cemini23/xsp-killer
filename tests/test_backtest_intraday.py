@@ -111,6 +111,7 @@ def _rules(
     regime_gate: str = "GREEN",
     max_open: int = 1,
     require_upper_bb: bool = False,
+    max_hold_sessions: int | None = None,
 ) -> Path:
     overrides = {
         "logging": {"logic_version": "xsp_lane_a_bt_intraday_test"},
@@ -141,6 +142,8 @@ def _rules(
             }
         },
     }
+    if max_hold_sessions is not None:
+        overrides["exit"]["max_hold_sessions"] = max_hold_sessions
     path = tmp_path / "bt_intraday_rules.yaml"
     write_merged_rules_dict(overrides, path)
     return path
@@ -210,8 +213,8 @@ def test_session_date_order_includes_saturday_gth_tail_when_observed():
     ]
 
 
-def test_trading_sessions_held_uses_observed_order_not_calendar():
-    """Friday entry → next observed exchange session is Mon (Sun+Mon share key)."""
+def test_trading_sessions_held_uses_calendar_not_observed_closed_dates():
+    """Friday entry → next calendar exchange session is Monday."""
     from xsp_killer.backtest.intraday import (
         session_date_order,
         trading_sessions_held,
@@ -228,12 +231,12 @@ def test_trading_sessions_held_uses_observed_order_not_calendar():
     entry = et(2024, 6, 14, 15, 45)
 
     # Same session date still held 0
-    assert trading_sessions_held(entry, et(2024, 6, 14, 16, 0), session_dates) == 0
+    assert trading_sessions_held(entry, et(2024, 6, 14, 16, 0)) == 0
 
     # Saturday closed is not a session date — calendar +1 must NOT count
     # Sun reopen and Mon morning share one exchange session key
-    assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15), session_dates) == 1
-    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0), session_dates) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15)) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0)) == 1
 
     # Pure calendar subtraction Fri→Sat would be 1; observed order skips Sat
     calendar_days = (date(2024, 6, 15) - date(2024, 6, 14)).days
@@ -369,7 +372,6 @@ def test_hold_cap_friday_closes_next_session_not_saturday(tmp_path):
     """max_hold_sessions=1: Friday entry force-closes on next observed session date."""
     from xsp_killer.backtest.intraday import (
         run_intraday_backtest,
-        session_date_order,
         trading_sessions_held,
     )
 
@@ -418,12 +420,10 @@ def test_hold_cap_friday_closes_next_session_not_saturday(tmp_path):
         if entry_d.weekday() == 4:  # Friday
             assert exit_d.date() != date(2024, 6, 8)
             assert exit_d.weekday() == 0  # Monday
-            sess = session_date_order(bars)
             assert (
                 trading_sessions_held(
                     datetime.fromisoformat(t.entry_ts),
                     exit_d,
-                    sess,
                 )
                 == 1
             )
@@ -775,6 +775,103 @@ def test_trade_rows_use_15m_and_sessions_held(tmp_path):
         assert t.sessions_held >= 0
 
 
+def test_runtime_replay_hold_cap_parity_across_july_four(tmp_path):
+    import dataclasses
+
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+    from xsp_killer.lane_a_monitor import (
+        LaneAPosition,
+        LaneRules,
+        evaluate_exit_alerts,
+    )
+
+    # The provider fixture includes weekday bars on the July 4 closure. The
+    # shared calendar, not observed bar dates, must decide the hold count.
+    bars, _ = _green_warmup_days(10, start=date(2024, 6, 24))
+    rules_path = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    replay = run_intraday_backtest(
+        bars,
+        rules_path,
+        variant_id="calendar_parity",
+        max_hold_sessions=2,
+        daily_context=_daily_context_before(bars),
+    )
+    trade = next(
+        row
+        for row in replay.trades
+        if datetime.fromisoformat(row.entry_ts).astimezone(ET).date()
+        == date(2024, 7, 2)
+    )
+    assert trade.exit_reason == "hold_cap"
+    assert trade.sessions_held == 2
+    assert datetime.fromisoformat(trade.exit_ts).astimezone(ET).date() == date(
+        2024, 7, 5
+    )
+
+    runtime_rules = dataclasses.replace(
+        LaneRules.from_yaml(rules_path), max_hold_sessions=2
+    )
+    runtime_pos = LaneAPosition(
+        position_id="parity",
+        chain_symbol="XSP",
+        option_type="call",
+        strike=600.0,
+        expiration_date=date(2024, 8, 16),
+        quantity=1.0,
+        average_price=5.0,
+        mark_price=4.9,
+        dte=30,
+        entry_ts=trade.entry_ts,
+    )
+    before = evaluate_exit_alerts(
+        runtime_pos,
+        runtime_rules,
+        now_et=et(2024, 7, 3, 12, 0),
+    )
+    on_cap = evaluate_exit_alerts(
+        runtime_pos,
+        runtime_rules,
+        now_et=datetime.fromisoformat(trade.exit_ts),
+    )
+    assert before == []
+    assert [alert.exit_reason for alert in on_cap] == ["hold_cap"]
+
+
+def test_replay_uses_yaml_hold_cap_when_kwarg_unset(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars, _ = _green_warmup_days(8, start=date(2024, 6, 3))
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        max_hold_sessions=1,
+    )
+    replay = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="yaml_hold_cap",
+        max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
+    )
+    assert any(row.exit_reason == "hold_cap" for row in replay.trades)
+
+
+def test_replay_zero_hold_cap_is_disabled(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars, _ = _green_warmup_days(8, start=date(2024, 6, 3))
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    replay = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="zero_hold_cap",
+        max_hold_sessions=0,
+        daily_context=_daily_context_before(bars),
+    )
+    assert all(row.exit_reason != "hold_cap" for row in replay.trades)
+
+
 # ---------------------------------------------------------------------------
 # Stage B quality review: forced exits, prior-day, residual, session keys, TZ
 # ---------------------------------------------------------------------------
@@ -821,38 +918,20 @@ def test_session_date_order_friday_evening_and_saturday_tail_share_one_key():
 
 
 def test_hold_counts_sunday_reopen_and_monday_as_one_session():
-    from xsp_killer.backtest.intraday import (
-        session_date_order,
-        trading_sessions_held,
-    )
+    from xsp_killer.backtest.intraday import trading_sessions_held
 
-    stamps = [
-        et(2024, 6, 13, 15, 45),  # Thu
-        et(2024, 6, 14, 15, 45),  # Fri
-        et(2024, 6, 16, 20, 15),  # Sun reopen → Mon key
-        et(2024, 6, 17, 10, 0),  # Mon morning → Mon key
-    ]
-    sess = session_date_order(_bars_from_timestamps(stamps))
     entry = et(2024, 6, 14, 15, 45)
-    assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15), sess) == 1
-    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0), sess) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15)) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0)) == 1
 
 
 def test_hold_counts_friday_evening_and_saturday_tail_as_one_session():
-    from xsp_killer.backtest.intraday import (
-        session_date_order,
-        trading_sessions_held,
-    )
+    from xsp_killer.backtest.intraday import trading_sessions_held
 
-    stamps = [
-        et(2024, 6, 14, 15, 45),  # Fri RTH entry session
-        et(2024, 6, 14, 20, 15),  # Fri evening → Sat key
-        et(2024, 6, 15, 8, 0),  # Sat tail → Sat key
-    ]
-    sess = session_date_order(_bars_from_timestamps(stamps))
     entry = et(2024, 6, 14, 15, 45)
-    assert trading_sessions_held(entry, et(2024, 6, 14, 20, 15), sess) == 1
-    assert trading_sessions_held(entry, et(2024, 6, 15, 8, 0), sess) == 1
+    # The GTH mapping remains Saturday, but XNYS has no Saturday session.
+    assert trading_sessions_held(entry, et(2024, 6, 14, 20, 15)) == 0
+    assert trading_sessions_held(entry, et(2024, 6, 15, 8, 0)) == 0
 
 
 def test_time_stop_requires_session_open_not_gap_or_weekend(tmp_path):

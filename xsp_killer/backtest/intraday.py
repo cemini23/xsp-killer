@@ -44,6 +44,7 @@ from xsp_killer.paper_economics import (
     pnl_from_entry_fill,
     pnl_pct,
 )
+from xsp_killer.xsp_sessions import exchange_session_key, trading_sessions_held
 
 logger = logging.getLogger("xsp_killer.backtest.intraday")
 
@@ -52,7 +53,6 @@ ENTRY_WINDOW_START = time(15, 45)
 ENTRY_WINDOW_END = time(16, 0)
 RTH_START = time(9, 30)
 RTH_END = time(16, 15)
-GTH_EVENING_START = time(20, 15)
 
 
 def _to_et(ts: datetime) -> datetime:
@@ -68,19 +68,6 @@ def _bar_ts_et(idx: Any) -> datetime:
     else:
         ts = ts.tz_convert(ET)
     return ts.to_pydatetime()
-
-
-def exchange_session_key(ts: datetime) -> date:
-    """Exchange trading-session key for hold counting.
-
-    Timestamps >= 20:15 ET map to the next calendar date (Sunday 20:15 and
-    Monday morning share Monday; Friday 20:15 and Saturday GTH tail share
-    Saturday). Timestamps at or before the curb close use the civil ET date.
-    """
-    now = _to_et(ts)
-    if now.time() >= GTH_EVENING_START:
-        return (now + timedelta(days=1)).date()
-    return now.date()
 
 
 def in_entry_window(ts: datetime) -> bool:
@@ -114,24 +101,6 @@ def session_date_order(bars: pd.DataFrame) -> list[date]:
             seen_set.add(key)
             seen.append(key)
     return seen
-
-
-def trading_sessions_held(
-    entry_ts: datetime,
-    now_ts: datetime,
-    session_dates: list[date],
-) -> int:
-    """Index distance on observed exchange session keys (not civil-day math)."""
-    if not session_dates:
-        return 0
-    entry_d = exchange_session_key(entry_ts)
-    now_d = exchange_session_key(now_ts)
-    try:
-        i_entry = session_dates.index(entry_d)
-        i_now = session_dates.index(now_d)
-    except ValueError:
-        return 0
-    return max(0, i_now - i_entry)
 
 
 def completed_rth_session_closes(bars: pd.DataFrame) -> list[tuple[date, float]]:
@@ -395,7 +364,6 @@ def run_intraday_backtest(
         result.notes.append("empty bars")
         return result
 
-    session_dates = session_date_order(bars)
     rth_closes = completed_rth_session_closes(bars)
     if daily_context is None:
         if source.lower() == "uw":
@@ -464,9 +432,7 @@ def run_intraday_backtest(
                 pos, lane_rules, now_et=now_et, ta_signal=ta_sig
             )
 
-            held_sessions = trading_sessions_held(
-                op.entry_ts, now_et, session_dates
-            )
+            held_sessions = trading_sessions_held(op.entry_ts, now_et)
 
             # Forced exits (time_stop / hold_cap) only on session-open bars.
             # Precedence on open bars: strategy alert > expiry time_stop > hold_cap.
@@ -476,6 +442,7 @@ def run_intraday_backtest(
                     force_reason = "time_stop"
                 elif (
                     max_hold_sessions is not None
+                    and max_hold_sessions > 0
                     and held_sessions >= max_hold_sessions
                 ):
                     force_reason = "hold_cap"

@@ -1220,17 +1220,19 @@ def recommended_regime_hold_yaml(
         f"{label} from UW regime/hold Stage A; active:false — human paste only. "
         f"validation_mean={hold_mean:.4f} n={n_hold} "
         f"familywise_mcpt_pass={mcpt_pass} pricing=modeled_bs_lite "
-        f"max_hold_sessions={hold} (engine kwarg, not a live YAML key)"
+        f"max_hold_sessions={hold}"
     )
 
     ov = deepcopy(overrides)
-    # Never emit unknown live keys or LIVE_ flags
+    # Runtime understands the hold cap, but generated candidates stay inactive.
     log_cfg = ov.setdefault("logging", {})
     log_cfg["logic_version"] = f"xsp_lane_a_{vid}"
-    for section in ("entry", "exit", "ta", "paper_entry"):
+    for section in ("entry", "ta", "paper_entry"):
         block = ov.get(section)
         if isinstance(block, dict):
             block.pop("max_hold_sessions", None)
+    exit_cfg = ov.setdefault("exit", {})
+    exit_cfg["max_hold_sessions"] = hold
 
     block = {
         vid: {
@@ -1243,7 +1245,7 @@ def recommended_regime_hold_yaml(
         "# Paste under config/lane_a_variants.yaml → variants: (human only)\n"
         "# Does not flip live trading gates. active: false always.\n"
         f"# status: {label}\n"
-        f"# research max_hold_sessions={hold} (apply via backtest engine only)\n"
+        f"# research max_hold_sessions={hold}\n"
     )
     body = yaml.safe_dump(block, sort_keys=False, default_flow_style=False)
     text = header + body

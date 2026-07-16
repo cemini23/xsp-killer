@@ -57,6 +57,12 @@ def test_load_variant_specs():
     assert "v2_21dte_atm" not in active_ids
 
 
+def test_active_variants_do_not_enable_session_hold_cap():
+    for spec in load_variant_specs():
+        if spec.active:
+            assert "max_hold_sessions" not in (spec.overrides.get("exit") or {})
+
+
 def test_merged_rules_dte_target(tmp_path):
     specs = load_variant_specs()
     spec = next(s for s in specs if s.variant_id == "v2_28dte_atm")

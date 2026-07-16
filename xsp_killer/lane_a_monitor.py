@@ -33,6 +33,7 @@ from xsp_killer.robinhood_mcp import (
     live_exits_enabled,
     rh_mcp_enabled,
 )
+from xsp_killer.xsp_sessions import trading_sessions_held
 
 logger = logging.getLogger("xsp_killer.xsp_lane_a")
 
@@ -49,6 +50,7 @@ ExitReason = Literal[
     "take_profit",
     "upper_bb_rejection",
     "time_stop",
+    "hold_cap",
     "manual",
 ]
 
@@ -73,6 +75,7 @@ class LaneRules:
     regime_yellow_require_bounce: bool = True
     swing_hold: bool = False
     max_hold_dte: int = 0
+    max_hold_sessions: int = 0
 
     @classmethod
     def from_yaml(cls, path: Path) -> LaneRules:
@@ -84,6 +87,23 @@ class LaneRules:
         def _parse_time(s: str) -> time:
             h, m = s.split(":")
             return time(int(h), int(m))
+
+        raw_max_hold_sessions = exit_cfg.get("max_hold_sessions", 0)
+        if isinstance(raw_max_hold_sessions, bool):
+            raise ValueError("exit.max_hold_sessions must be a nonnegative integer")
+        if isinstance(raw_max_hold_sessions, int):
+            max_hold_sessions = raw_max_hold_sessions
+        elif isinstance(raw_max_hold_sessions, str):
+            try:
+                max_hold_sessions = int(raw_max_hold_sessions)
+            except ValueError as exc:
+                raise ValueError(
+                    "exit.max_hold_sessions must be a nonnegative integer"
+                ) from exc
+        else:
+            raise ValueError("exit.max_hold_sessions must be a nonnegative integer")
+        if max_hold_sessions < 0:
+            raise ValueError("exit.max_hold_sessions must be a nonnegative integer")
 
         return cls(
             lane=str(data.get("lane", "A")),
@@ -118,6 +138,7 @@ class LaneRules:
             ),
             swing_hold=bool(exit_cfg.get("swing_hold", False)),
             max_hold_dte=int(exit_cfg.get("max_hold_dte", 0)),
+            max_hold_sessions=max_hold_sessions,
         )
 
 
@@ -611,13 +632,19 @@ def _attach_economics_pnl(
 
 def _entry_date_et(entry_ts: str | None) -> date | None:
     """Calendar entry date in America/New_York (for overnight hold logic)."""
+    ts = _entry_ts_et(entry_ts)
+    return ts.date() if ts is not None else None
+
+
+def _entry_ts_et(entry_ts: str | None) -> datetime | None:
+    """Parse a persisted entry timestamp, failing closed on invalid values."""
     if not entry_ts:
         return None
     try:
         ts = datetime.fromisoformat(str(entry_ts).replace("Z", "+00:00"))
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        return ts.astimezone(ET).date()
+        return ts.astimezone(ET)
     except (ValueError, TypeError):
         return None
 
@@ -696,21 +723,40 @@ def evaluate_exit_alerts(
             )
             return alerts
 
-    if rules.swing_hold:
-        # Hold for recovery: only force-exit near expiry.
-        if pos.dte is not None and pos.dte <= rules.max_hold_dte:
-            alerts.append(
-                ExitAlert(
-                    position_id=pos.position_id,
-                    exit_reason="time_stop",
-                    message=(
-                        f"Near-expiry cut (DTE {pos.dte} <= {rules.max_hold_dte}, "
-                        f"return {ret_pct * 100:.1f}%)"
-                    ),
-                    pnl_usd=pnl,
-                    pnl_per_contract=pnl_c,
-                )
+    time_stop_dte = rules.max_hold_dte if rules.swing_hold else 0
+    if pos.dte is not None and pos.dte <= time_stop_dte:
+        alerts.append(
+            ExitAlert(
+                position_id=pos.position_id,
+                exit_reason="time_stop",
+                message=(
+                    f"Near-expiry cut (DTE {pos.dte} <= {time_stop_dte}, "
+                    f"return {ret_pct * 100:.1f}%)"
+                ),
+                pnl_usd=pnl,
+                pnl_per_contract=pnl_c,
             )
+        )
+        return alerts
+
+    entry_ts = _entry_ts_et(pos.entry_ts)
+    if (
+        rules.max_hold_sessions > 0
+        and entry_ts is not None
+        and trading_sessions_held(entry_ts, now) >= rules.max_hold_sessions
+    ):
+        alerts.append(
+            ExitAlert(
+                position_id=pos.position_id,
+                exit_reason="hold_cap",
+                message=(
+                    "Exchange-session hold cap reached "
+                    f"({rules.max_hold_sessions} sessions)"
+                ),
+                pnl_usd=pnl,
+                pnl_per_contract=pnl_c,
+            )
+        )
         return alerts
 
     # Baseline: no clock-forced morning cut — exit only on SL/TP/BB above.

@@ -179,6 +179,14 @@ def _unknown_regime_row() -> dict[str, Any]:
     }
 
 
+def _daily_session_date(idx: Any) -> date:
+    """Preserve date-labeled daily bars instead of timezone-shifting midnight."""
+    ts = pd.Timestamp(idx)
+    if ts.hour == 0 and ts.minute == 0 and ts.second == 0:
+        return ts.date()
+    return _bar_ts_et(ts).date()
+
+
 def align_completed_daily_regime(
     intraday: pd.DataFrame,
     daily_context: pd.DataFrame,
@@ -194,7 +202,7 @@ def align_completed_daily_regime(
     regime = _regime_series(daily["close"].astype(float))
     by_date: dict[date, pd.Series] = {}
     for idx, row in regime.iterrows():
-        by_date[_bar_ts_et(idx).date()] = row
+        by_date[_daily_session_date(idx)] = row
     dates = sorted(by_date)
 
     rows: list[dict[str, Any]] = []
@@ -390,6 +398,8 @@ def run_intraday_backtest(
     session_dates = session_date_order(bars)
     rth_closes = completed_rth_session_closes(bars)
     if daily_context is None:
+        if source.lower() == "uw":
+            raise ValueError("daily_context is required for UW intraday replay")
         daily_context = _daily_context_from_intraday(bars)
         result.notes.append("daily_context derived from completed fixture RTH closes")
     regime_df = align_completed_daily_regime(bars, daily_context)

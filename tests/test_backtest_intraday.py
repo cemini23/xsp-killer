@@ -521,6 +521,55 @@ def test_current_daily_close_cannot_change_1545_entry_decision(tmp_path):
     assert any(note == "residual_open=1" for note in high.notes)
 
 
+def test_utc_midnight_daily_close_cannot_change_same_day_entry(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    intraday = _bars_from_timestamps([et(2024, 6, 14, 15, 45)])
+    prior = _daily_bars(end="2024-06-13")
+    prior.index = pd.DatetimeIndex(
+        [pd.Timestamp(idx.date(), tz="UTC") for idx in prior.index]
+    )
+
+    def with_current(close: float) -> pd.DataFrame:
+        current = _daily_bars(1, end="2024-06-14", last_close=close)
+        current.index = pd.DatetimeIndex(
+            [pd.Timestamp(idx.date(), tz="UTC") for idx in current.index]
+        )
+        return pd.concat([prior, current])
+
+    rules = _rules(tmp_path)
+    low = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="utc_daily_low",
+        daily_context=with_current(1.0),
+    )
+    high = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="utc_daily_high",
+        daily_context=with_current(10_000.0),
+    )
+
+    assert low.n_entries_blocked == high.n_entries_blocked == 0
+    assert "residual_open=1" in low.notes
+    assert "residual_open=1" in high.notes
+
+
+def test_uw_intraday_replay_requires_explicit_daily_context(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars = _bars_from_timestamps([et(2024, 6, 14, 15, 45)])
+
+    with pytest.raises(ValueError, match="daily_context.*required.*UW"):
+        run_intraday_backtest(
+            bars,
+            _rules(tmp_path),
+            variant_id="uw_missing_daily",
+            source="uw",
+        )
+
+
 def test_completed_hourly_bars_exclude_active_bucket_and_future_1600():
     from xsp_killer.backtest.intraday import completed_hourly_bars
 

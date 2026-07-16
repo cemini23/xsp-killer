@@ -155,8 +155,9 @@ def test_adapter_rejects_registered_onedrive_root(monkeypatch, tmp_path):
         RobinhoodMCPAdapter(RhMcpConfig(token_path=synced / "token.json"))
 
 
+@pytest.mark.parametrize("component", ["OneDrive", "oNeDrIvE - Example"])
 def test_adapter_rejects_case_insensitive_onedrive_path_component(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, component
 ):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -174,9 +175,35 @@ def test_adapter_rejects_case_insensitive_onedrive_path_component(
         raising=False,
     )
 
-    token_path = tmp_path / "oNeDrIvE - Example" / "token.json"
+    token_path = tmp_path / component / "token.json"
     with pytest.raises(RhMcpNotReady, match="OneDrive"):
         RobinhoodMCPAdapter(RhMcpConfig(token_path=token_path))
+
+
+@pytest.mark.parametrize(
+    "component",
+    ["OneDriveBackup", "OneDriveAdmin", "OneDrive - "],
+)
+def test_adapter_allows_non_onedrive_path_component(monkeypatch, tmp_path, component):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.setattr(
+        robinhood_mcp,
+        "_registered_onedrive_roots",
+        lambda: set(),
+    )
+    for env_name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.delenv(
+        "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT",
+        raising=False,
+    )
+
+    token_path = tmp_path / component / "token.json"
+    adapter = RobinhoodMCPAdapter(RhMcpConfig(token_path=token_path))
+
+    assert adapter.config.token_path == token_path.resolve()
 
 
 def test_rh_config_and_docs_keep_operational_tokens_outside_repo():

@@ -110,6 +110,16 @@ def _registered_onedrive_roots() -> set[Path]:
     return roots
 
 
+def _is_onedrive_path_component(component: str) -> bool:
+    normalized = component.casefold()
+    if normalized == "onedrive":
+        return True
+    tenant_prefix = "onedrive - "
+    return normalized.startswith(tenant_prefix) and bool(
+        component[len(tenant_prefix) :].strip()
+    )
+
+
 def validate_token_path(token_path: Path) -> Path:
     """Resolve and reject operational token paths in repositories or sync roots."""
     resolved = token_path.expanduser().resolve()
@@ -123,7 +133,7 @@ def validate_token_path(token_path: Path) -> Path:
         for protected in protected_roots
     )
     has_onedrive_component = any(
-        part.casefold().startswith("onedrive") for part in resolved.parts
+        _is_onedrive_path_component(part) for part in resolved.parts
     )
     if (under_protected_root or has_onedrive_component) and not (
         _development_repo_token_allowed()

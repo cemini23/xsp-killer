@@ -24,6 +24,18 @@ BarMode = Literal["fixture", "uw"]
 BarInterval = Literal["1d", "15m"]
 
 
+class FixtureFallbackError(RuntimeError):
+    """Raised by strict UW loading when fixture substitution would be required.
+
+    Distinct from fail-open ``load_bars`` / ``load_uw_bars``, which return
+    fixtures or None. Strict mode never returns fixture data.
+    """
+
+
+class InsufficientBarsError(ValueError):
+    """Raised when true UW bars exist but fail coverage floors."""
+
+
 def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFrame:
     """Standardize columns to lower-case OHLCV with DatetimeIndex (tz-aware ET)."""
     out = df.copy()
@@ -194,6 +206,82 @@ def load_uw_bars(
     if use_cache:
         _write_cache(df, cache_p)
     return df
+
+
+def load_uw_bars_strict(
+    ticker: str = "SPY",
+    *,
+    period: str = "2y",
+    interval: BarInterval = "1d",
+    use_cache: bool = True,
+    min_bars: int = 1,
+    min_sessions: int = 0,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Load true UW OHLC only — never return fixtures.
+
+    Raises:
+        FixtureFallbackError: missing key/provider/empty/fetch failure (would
+            have required fixture substitution).
+        InsufficientBarsError: UW frame present but below min_bars/min_sessions.
+
+    Returns:
+        ``(frame, coverage)`` where *coverage* includes start/end/n_bars/
+        n_sessions/interval/has_overnight_bars/session_phases_observed for
+        15m bars, or a daily-oriented summary for 1d.
+    """
+    key = os.getenv("UNUSUAL_WHALES_API_KEY", "").strip()
+    if not key:
+        raise FixtureFallbackError(
+            "strict UW load refused: UNUSUAL_WHALES_API_KEY unset/empty "
+            "(would fall back to fixture)"
+        )
+
+    df = load_uw_bars(
+        ticker, period=period, interval=interval, use_cache=use_cache
+    )
+    if df is None or df.empty:
+        raise FixtureFallbackError(
+            f"strict UW load refused: no UW bars for {ticker} "
+            f"period={period} interval={interval} (empty/provider/cache miss)"
+        )
+
+    if interval == "15m":
+        # Lazy import avoids circular import with intraday session helpers.
+        from xsp_killer.backtest.intraday import bar_coverage
+
+        coverage = bar_coverage(df)
+    else:
+        start = df.index[0]
+        end = df.index[-1]
+        # Daily: sessions ≈ distinct calendar dates with bars
+        n_sess = int(df.index.normalize().nunique())
+        coverage = {
+            "n_bars": int(len(df)),
+            "n_sessions": n_sess,
+            "has_overnight_bars": False,
+            "session_phases_observed": ["daily"],
+            "start": (
+                start.isoformat()
+                if hasattr(start, "isoformat")
+                else str(start)
+            ),
+            "end": end.isoformat() if hasattr(end, "isoformat") else str(end),
+            "interval": "1d",
+        }
+
+    n_bars = int(coverage.get("n_bars") or 0)
+    n_sessions = int(coverage.get("n_sessions") or 0)
+    if n_bars < int(min_bars):
+        raise InsufficientBarsError(
+            f"strict UW insufficient bars: {n_bars} < min_bars={min_bars} "
+            f"(interval={interval}, period={period})"
+        )
+    if int(min_sessions) > 0 and n_sessions < int(min_sessions):
+        raise InsufficientBarsError(
+            f"strict UW insufficient sessions: {n_sessions} < "
+            f"min_sessions={min_sessions} (interval={interval}, period={period})"
+        )
+    return df, coverage
 
 
 def load_bars(

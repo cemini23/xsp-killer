@@ -229,14 +229,16 @@ def assert_intraday_coverage(
     min_bars: int,
     min_sessions: int,
 ) -> dict[str, Any]:
-    """Raise if coverage floors are not met; return coverage dict on success."""
+    """Raise ``InsufficientBarsError`` if floors unmet; return coverage on success."""
+    from xsp_killer.backtest.bars import InsufficientBarsError
+
     cov = bar_coverage(bars)
     if cov["n_bars"] < min_bars:
-        raise ValueError(
+        raise InsufficientBarsError(
             f"insufficient intraday bars: {cov['n_bars']} < min_bars={min_bars}"
         )
     if cov["n_sessions"] < min_sessions:
-        raise ValueError(
+        raise InsufficientBarsError(
             f"insufficient sessions: {cov['n_sessions']} < min_sessions={min_sessions}"
         )
     return cov

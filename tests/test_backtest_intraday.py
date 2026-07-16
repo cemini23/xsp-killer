@@ -994,3 +994,103 @@ def test_utc_indexed_bars_convert_to_et_for_session_and_entry(tmp_path):
         entry_et = datetime.fromisoformat(t.entry_ts).astimezone(ET)
         assert entry_et.hour == 15 and entry_et.minute >= 45
         assert t.bar_interval == "15m"
+
+
+# ---------------------------------------------------------------------------
+# Task 8: coverage honesty + strict UW loading
+# ---------------------------------------------------------------------------
+
+
+def test_fixture_coverage_reports_rth_only():
+    from xsp_killer.backtest.bars import load_fixture_intraday
+    from xsp_killer.backtest.intraday import bar_coverage
+
+    coverage = bar_coverage(load_fixture_intraday())
+    assert coverage["n_bars"] > 0
+    assert coverage["n_sessions"] >= 1
+    assert coverage["has_overnight_bars"] is False
+    assert coverage["session_phases_observed"] == ["RTH"]
+    assert coverage["interval"] == "15m"
+    assert coverage["start"]
+    assert coverage["end"]
+    # Must not fabricate GTH/Curb from RTH-only fixture
+    assert "GTH" not in coverage["session_phases_observed"]
+    assert "Curb" not in coverage["session_phases_observed"]
+
+
+def test_coverage_observes_gth_and_curb_only_when_present():
+    from xsp_killer.backtest.intraday import bar_coverage
+
+    stamps = [
+        et(2024, 6, 13, 8, 0),  # GTH
+        et(2024, 6, 13, 10, 0),  # RTH
+        et(2024, 6, 13, 16, 30),  # Curb
+    ]
+    cov = bar_coverage(_bars_from_timestamps(stamps))
+    assert cov["session_phases_observed"] == ["GTH", "RTH", "Curb"]
+    assert cov["has_overnight_bars"] is True
+    assert cov["n_sessions"] >= 1
+
+
+def test_assert_intraday_coverage_raises_insufficient():
+    from xsp_killer.backtest.bars import InsufficientBarsError
+    from xsp_killer.backtest.intraday import assert_intraday_coverage
+
+    stamps = [et(2024, 6, 13, 10, 0), et(2024, 6, 13, 10, 15)]
+    bars = _bars_from_timestamps(stamps)
+    with pytest.raises(InsufficientBarsError):
+        assert_intraday_coverage(bars, min_bars=200, min_sessions=20)
+
+
+def test_strict_uw_loader_raises_without_key(monkeypatch):
+    from xsp_killer.backtest.bars import FixtureFallbackError, load_uw_bars_strict
+
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "")
+    monkeypatch.delenv("UNUSUAL_WHALES_API_KEY", raising=False)
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "")
+    with pytest.raises(FixtureFallbackError):
+        load_uw_bars_strict("SPY", period="60d", interval="15m", use_cache=False)
+
+
+def test_strict_uw_loader_raises_insufficient_bars(monkeypatch):
+    from xsp_killer.backtest.bars import InsufficientBarsError, load_uw_bars_strict
+
+    tiny = _bars_from_timestamps(
+        [
+            et(2024, 6, 13, 10 + (i * 15) // 60, (i * 15) % 60)
+            for i in range(10)
+        ],
+        start_px=450.0,
+        step=0.1,
+    )
+
+    def fake_load(*a, **k):
+        return tiny
+
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key-not-real")
+    monkeypatch.setattr(
+        "xsp_killer.backtest.bars.load_uw_bars",
+        fake_load,
+    )
+    with pytest.raises(InsufficientBarsError):
+        load_uw_bars_strict(
+            "SPY",
+            period="60d",
+            interval="15m",
+            use_cache=False,
+            min_bars=200,
+            min_sessions=1,
+        )
+
+
+def test_load_bars_still_fail_open_without_key(monkeypatch):
+    """Existing load_bars fail-open behavior must remain unchanged."""
+    from xsp_killer.backtest.bars import load_bars
+
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "")
+    bars, source = load_bars(mode="uw", interval="15m")
+    assert source == "fixture_fallback"
+    assert len(bars) > 0
+    bars_d, source_d = load_bars(mode="uw", interval="1d")
+    assert source_d == "fixture_fallback"
+    assert len(bars_d) > 0

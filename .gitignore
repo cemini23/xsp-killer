@@ -23,3 +23,8 @@ briefs/variant_rules_cache/
 briefs/.variant-*
 briefs/*.lock
 config/*.lock
+
+# Local backtest / desk reports (do not push)
+reports/
+!reports/.gitkeep
+

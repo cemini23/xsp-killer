@@ -49,6 +49,7 @@ from xsp_killer.paper_economics import (
     pnl_from_entry_fill,
     pnl_pct,
 )
+from xsp_killer.xsp_sessions import trading_sessions_held
 
 logger = logging.getLogger("xsp_killer.backtest.engine")
 
@@ -264,6 +265,7 @@ class _OpenPos:
     position: LaneAPosition
     entry_fill: float
     entry_i: int
+    entry_ts: datetime
     entry_reason: str
     regime_at_entry: str | None
     dte_at_entry: int
@@ -355,7 +357,8 @@ def run_backtest(
             force_reason = None
             if dte <= 0:
                 force_reason = "time_stop"
-            held_sessions = i - op.entry_i
+            bars_held = i - op.entry_i
+            held_sessions = trading_sessions_held(op.entry_ts, now_et)
             if (
                 not alerts
                 and not force_reason
@@ -392,7 +395,7 @@ def run_backtest(
                     entry_mid=float(pos.entry_mid_premium or 0.0),
                     exit_mid=float(mark),
                     entry_fill=float(op.entry_fill),
-                    bars_held=held_sessions,
+                    bars_held=bars_held,
                     regime_at_entry=op.regime_at_entry,
                     entry_reason=op.entry_reason,
                     sessions_held=held_sessions,
@@ -492,6 +495,7 @@ def run_backtest(
                 position=pos,
                 entry_fill=fill,
                 entry_i=i,
+                entry_ts=now_et,
                 entry_reason=reason,
                 regime_at_entry=str(regime) if regime else None,
                 dte_at_entry=dte_target,
@@ -527,7 +531,8 @@ def run_backtest(
                 net_pct = (exit_fill - op.entry_fill) / op.entry_fill
             else:
                 net_pct = 0.0
-            held_sessions = i - op.entry_i
+            bars_held = i - op.entry_i
+            held_sessions = trading_sessions_held(op.entry_ts, now_et)
             result.trades.append(
                 TradeRow(
                     variant_id=variant_id,
@@ -541,7 +546,7 @@ def run_backtest(
                     entry_mid=float(pos.entry_mid_premium or 0.0),
                     exit_mid=float(mark),
                     entry_fill=float(op.entry_fill),
-                    bars_held=held_sessions,
+                    bars_held=bars_held,
                     regime_at_entry=op.regime_at_entry,
                     entry_reason=op.entry_reason,
                     sessions_held=held_sessions,

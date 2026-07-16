@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -398,7 +399,9 @@ def run_intraday_backtest(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich_bars failed: %s", exc)
-        enriched = bars.copy()
+        # TA must fail closed. In particular, never substitute raw 15m bars
+        # when hourly enrichment was requested.
+        enriched = primary_bars.iloc[0:0].copy()
         result.notes.append(f"enrich_bars failed: {exc}")
 
     open_book: list[_OpenPos] = []
@@ -441,6 +444,12 @@ def run_intraday_backtest(
                 ei = _latest_completed_iloc(enriched.index, idx)
                 if ei is not None:
                     ta_sig = _ta_signal_at(enriched, ei, ta_rules)
+                else:
+                    ta_sig = SimpleNamespace(
+                        upper_bb_touched=False,
+                        exit_ok=False,
+                        detail="TA unavailable",
+                    )
 
             # Strategy alerts already require xsp_session_open internally.
             alerts = evaluate_exit_alerts(

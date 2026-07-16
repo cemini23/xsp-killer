@@ -506,6 +506,22 @@ def select_train_refinement_seeds(
     return ranked[: min(int(top_k), len(ranked))]
 
 
+def _stage_a_mcpt_family(
+    rows: list[dict[str, Any]],
+    *,
+    min_trades: int,
+) -> dict[str, list[tuple[str, float]]]:
+    """Build the validation-qualified family from unique behaviors only."""
+    return {
+        str(row.get("variant_id") or ""): list(
+            row.get("validation_observations") or []
+        )
+        for row in rows
+        if not row.get("behavior_duplicate_of")
+        and int(row.get("n_validation") or 0) >= int(min_trades)
+    }
+
+
 def run_stage_a(
     bars: pd.DataFrame,
     *,
@@ -654,17 +670,7 @@ def run_stage_a(
         finalists = _select_stage_a_finalists(
             rows, top_k=top_k, min_trades=min_trades
         )
-        qualified = [
-            row
-            for row in rows
-            if int(row.get("n_validation") or 0) >= int(min_trades)
-        ]
-        family = {
-            str(row.get("variant_id") or ""): list(
-                row.get("validation_observations") or []
-            )
-            for row in qualified
-        }
+        family = _stage_a_mcpt_family(rows, min_trades=min_trades)
         family_results = (
             familywise_max_stat_mcpt(family, n_perm=int(n_perm))
             if run_mcpt and family
@@ -1206,13 +1212,9 @@ def recommended_regime_hold_yaml(
         if max_hold_sessions is not None
         else (row.get("max_hold_sessions") or 0)
     )
-    if edge_ok is None:
-        edge_ok = (
-            hold_mean > 0
-            and mcpt_pass
-            and n_hold >= int(min_trades)
-            and row.get("stable_window") is True
-        )
+    # A partial Stage A row cannot establish the full promotion gate.
+    # Only the caller's explicit edge-confirmation result may label a survivor.
+    edge_ok = edge_ok is True
 
     vid = str(row.get("variant_id") or "rha_candidate")
     label = "RESEARCH-SURVIVOR (inactive)" if edge_ok else "RESEARCH ONLY"

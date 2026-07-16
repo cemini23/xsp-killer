@@ -705,6 +705,72 @@ def test_primary_ta_uses_completed_hourly_aggregates(monkeypatch, tmp_path):
     assert all(ts.minute == 30 for ts in selected_ta_bars)
 
 
+def test_hourly_enrichment_failure_never_uses_raw_15m_for_ta(monkeypatch, tmp_path):
+    from xsp_killer.backtest import intraday as intrad
+
+    bars, _ = _green_warmup_days(5)
+    daily = _daily_context_before(bars)
+
+    def fail_enrich(*_args, **_kwargs):
+        raise RuntimeError("hourly TA unavailable")
+
+    def reject_raw_ta(*_args, **_kwargs):
+        raise AssertionError("raw 15m bars reached a TA evaluator")
+
+    monkeypatch.setattr(intrad, "enrich_bars", fail_enrich)
+    monkeypatch.setattr(intrad, "_ta_entry_ok_at", reject_raw_ta)
+    monkeypatch.setattr(intrad, "_ta_signal_at", reject_raw_ta)
+
+    result = intrad.run_intraday_backtest(
+        bars,
+        _rules(
+            tmp_path,
+            regime_gate="DIP_BOUNCE",
+            require_upper_bb=True,
+        ),
+        variant_id="failed_hourly_ta",
+        daily_context=daily,
+    )
+
+    assert result.trades == []
+    assert result.residual_open == 0
+    assert result.n_entries_blocked > 0
+    assert any("enrich_bars failed" in note for note in result.notes)
+
+
+def test_enrichment_failure_blocks_upper_bb_tp_but_allows_non_ta_entry(
+    monkeypatch, tmp_path
+):
+    from xsp_killer.backtest import intraday as intrad
+
+    bars, _ = _green_warmup_days(5)
+
+    def fail_enrich(*_args, **_kwargs):
+        raise RuntimeError("hourly TA unavailable")
+
+    def reject_raw_ta(*_args, **_kwargs):
+        raise AssertionError("raw 15m bars reached upper-BB evaluation")
+
+    monkeypatch.setattr(intrad, "enrich_bars", fail_enrich)
+    monkeypatch.setattr(intrad, "_ta_signal_at", reject_raw_ta)
+
+    result = intrad.run_intraday_backtest(
+        bars,
+        _rules(
+            tmp_path,
+            take_profit_pct=0.0,
+            regime_gate="GREEN",
+            require_upper_bb=True,
+        ),
+        variant_id="failed_hourly_exit_ta",
+        daily_context=_daily_context_before(bars),
+    )
+
+    assert result.trades or result.residual_open > 0
+    assert all(trade.exit_reason != "take_profit" for trade in result.trades)
+    assert any("enrich_bars failed" in note for note in result.notes)
+
+
 def test_optimizer_stage_b_passes_loaded_daily_context():
     script = ROOT / "scripts" / "optimize_regime_hold.py"
     tree = ast.parse(script.read_text(encoding="utf-8"))

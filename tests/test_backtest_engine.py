@@ -259,6 +259,81 @@ def test_max_hold_sessions_forces_exit(tmp_path):
     assert all(t.bar_interval == "1d" for t in capped)
 
 
+def test_daily_hold_uses_calendar_when_a_session_bar_is_missing(tmp_path):
+    from xsp_killer.xsp_sessions import is_exchange_session
+
+    bars = _green_uptrend(90)
+    bars = bars[
+        [is_exchange_session(ts.to_pydatetime()) for ts in bars.index]
+    ].copy()
+    missing_session = bars.index[51]
+    bars = bars.drop(index=missing_session)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=5.0,
+        stop_loss_pct=5.0,
+        dte_target=28,
+    )
+
+    result = run_backtest(
+        bars,
+        rules,
+        variant_id="missing_daily_session",
+        max_hold_sessions=2,
+    )
+
+    first_capped = next(t for t in result.trades if t.exit_reason == "hold_cap")
+    assert first_capped.bars_held == 1
+    assert first_capped.sessions_held == 2
+
+
+def test_daily_hold_calendar_matches_july_fourth_holiday(tmp_path, monkeypatch):
+    from xsp_killer.backtest import engine
+    from xsp_killer.xsp_sessions import is_exchange_session
+    from xsp_killer.xsp_sessions import trading_sessions_held as shared_hold_count
+
+    calls: list[tuple[datetime, datetime]] = []
+
+    def spy_hold_count(start, end):
+        calls.append((start, end))
+        return shared_hold_count(start, end)
+
+    monkeypatch.setattr(engine, "trading_sessions_held", spy_hold_count)
+
+    candidates = pd.date_range(
+        end="2024-07-03 15:45",
+        periods=120,
+        freq="D",
+        tz=ET,
+    )
+    sessions = [
+        ts for ts in candidates if is_exchange_session(ts.to_pydatetime())
+    ][-51:]
+    sessions.append(pd.Timestamp(datetime(2024, 7, 5, 15, 45, tzinfo=ET)))
+    bars = _green_uptrend(len(sessions))
+    bars.index = pd.DatetimeIndex(sessions)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=5.0,
+        stop_loss_pct=5.0,
+        dte_target=28,
+    )
+
+    result = run_backtest(
+        bars,
+        rules,
+        variant_id="holiday_daily_hold",
+        max_hold_sessions=1,
+    )
+
+    first_capped = next(t for t in result.trades if t.exit_reason == "hold_cap")
+    assert datetime.fromisoformat(first_capped.entry_ts).date() == date(2024, 7, 3)
+    assert datetime.fromisoformat(first_capped.exit_ts).date() == date(2024, 7, 5)
+    assert first_capped.bars_held == 1
+    assert first_capped.sessions_held == 1
+    assert calls
+
+
 def _dte_at_exit(trade) -> int:
     """Calendar DTE remaining on the exit bar (engine force-expiry axis)."""
     entry = datetime.fromisoformat(trade.entry_ts)

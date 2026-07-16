@@ -701,6 +701,39 @@ def test_behavioral_clones_do_not_form_stability_or_consume_finalist_quota():
     ]
 
 
+def test_behavioral_clone_does_not_change_mcpt_family_or_finalist_quota():
+    from xsp_killer.backtest.regime_hold import _stage_a_mcpt_family
+    from xsp_killer.backtest.report import familywise_max_stat_mcpt
+
+    sessions = [f"2026-01-{day:02d}" for day in range(1, 21)]
+    observations = [(session, 0.1) for session in sessions]
+    base = {
+        "n_validation": len(observations),
+        "validation_mean_net_pnl_pct": 0.1,
+        "validation_observations": observations,
+    }
+    unique_rows = [
+        dict(base, variant_id="original"),
+        dict(base, variant_id="distinct", validation_mean_net_pnl_pct=0.09),
+    ]
+    rows_with_clone = [
+        unique_rows[0],
+        dict(base, variant_id="clone", behavior_duplicate_of="original"),
+        unique_rows[1],
+    ]
+
+    family_without = _stage_a_mcpt_family(unique_rows, min_trades=8)
+    family_with = _stage_a_mcpt_family(rows_with_clone, min_trades=8)
+    assert family_with == family_without
+    assert "clone" not in family_with
+    assert familywise_max_stat_mcpt(
+        family_with, n_perm=100, seed=7
+    ) == familywise_max_stat_mcpt(family_without, n_perm=100, seed=7)
+
+    finalists = _select_stage_a_finalists(rows_with_clone, top_k=2, min_trades=8)
+    assert [row["variant_id"] for row in finalists] == ["original", "distinct"]
+
+
 def test_test_exit_perturbation_cannot_change_selection_behavior_dedupe():
     from types import SimpleNamespace
 
@@ -1126,6 +1159,21 @@ def test_recommended_yaml_always_inactive_no_live_text():
     )
     # Generation must not mutate the caller's overrides.
     assert "max_hold_sessions" not in (ov.get("exit") or {})
+
+
+def test_recommended_yaml_defaults_fail_closed_without_explicit_full_gate():
+    row = {
+        "variant_id": "partial_stage_a_winner",
+        "n_validation": 20,
+        "validation_mean_net_pnl_pct": 0.50,
+        "familywise_pass_5pct": True,
+        "stable_window": True,
+        "max_hold_sessions": 3,
+    }
+    text = recommended_regime_hold_yaml(row, {"exit": {}})
+
+    assert "RESEARCH ONLY" in text
+    assert "RESEARCH-SURVIVOR" not in text
 
 
 def test_modeled_pricing_is_never_promotion_eligible():

@@ -184,6 +184,27 @@ def test_swing_hold_near_expiry_time_stop(tmp_path):
     ), f"expected time_stop, got {reasons}"
 
 
+def test_max_hold_sessions_forces_exit(tmp_path):
+    bars = _flat_series(60)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        dte_target=28,
+    )
+    result = run_backtest(
+        bars,
+        rules,
+        variant_id="hold3",
+        max_hold_sessions=3,
+    )
+    capped = [t for t in result.trades if t.exit_reason == "hold_cap"]
+    assert capped
+    assert all(t.bars_held == 3 for t in capped)
+    assert all(t.sessions_held == 3 for t in capped)
+    assert all(t.bar_interval == "1d" for t in capped)
+
+
 def test_determinism_same_fixture(tmp_path):
     bars = load_fixture_daily()
     rules = _rules(tmp_path, take_profit_pct=0.15, stop_loss_pct=0.25)

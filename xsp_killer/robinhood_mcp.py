@@ -393,6 +393,7 @@ def pinned_account_on_token(
         f"({len(nums)} account id(s) seen) — refuse Claudio/David mixup"
     )
 
+
 def _review_outcome_approved(result: Any) -> tuple[bool, str]:
     """Return (approved, reason) for a ``review_option_order`` business outcome.
 

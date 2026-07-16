@@ -1025,7 +1025,10 @@ def test_review_grant_key_includes_time_in_force():
 
 def test_pinned_account_on_token_match(monkeypatch):
     class Fake:
-        config = RhMcpConfig(agentic_account_id="ACC-1", token_path=__import__("pathlib").Path("."))
+        config = RhMcpConfig(
+            agentic_account_id="ACC-1",
+            token_path=__import__("pathlib").Path("."),
+        )
 
         def get_accounts(self):
             return [{"account_number": "ACC-1", "nickname": "Agentic"}]
@@ -1038,7 +1041,10 @@ def test_pinned_account_on_token_match(monkeypatch):
 
 def test_pinned_account_on_token_mismatch(monkeypatch):
     class Fake:
-        config = RhMcpConfig(agentic_account_id="CLAUDIO", token_path=__import__("pathlib").Path("."))
+        config = RhMcpConfig(
+            agentic_account_id="CLAUDIO",
+            token_path=__import__("pathlib").Path("."),
+        )
 
         def get_accounts(self):
             return [{"account_number": "DAVID", "nickname": "Agentic"}]

@@ -1565,3 +1565,17 @@ def test_dip_swing_cluster_leader_none_when_sessions_met_but_trades_under_gate(
     assert "edge_confirmed=true" in cluster["leader_gate"]
     assert "realized_pnl_usd_1x_approx" in cluster["variants"][0]
     assert "edge_confirmed" in cluster["variants"][0]
+
+
+def test_opt_candidate_is_inactive():
+    from xsp_killer.backtest.variants import resolve_variant_specs
+
+    all_specs = resolve_variant_specs(variants="all")
+    candidate = next(
+        s for s in all_specs if s.variant_id == "opt_dte28_tp20_sl30_gyb"
+    )
+    assert candidate.active is False
+    active_ids = {
+        s.variant_id for s in resolve_variant_specs(variants="active")
+    }
+    assert "opt_dte28_tp20_sl30_gyb" not in active_ids

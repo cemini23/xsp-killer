@@ -1235,7 +1235,7 @@ def test_dip_bounce_gate_requires_confirmed_bounce():
 def test_swing_hold_does_not_time_stop_across_days():
     # Small green, far from expiry — no clock forced cut for swing or baseline.
     pos = _swing_pos(avg=5.0, mark=5.1, dte=20)
-    now = datetime(2026, 6, 19, 10, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 10, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert not any(a.exit_reason == "time_stop" for a in alerts)
     non_swing = dataclasses.replace(SWING_RULES, swing_hold=False)
@@ -1245,7 +1245,7 @@ def test_swing_hold_does_not_time_stop_across_days():
 
 def test_swing_hold_takes_profit_intraday_outside_window():
     pos = _swing_pos(avg=5.0, mark=7.0, dte=20)  # +40%
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "take_profit" for a in alerts)
     # Baseline now also takes profit anytime session is open (no clock gate).
@@ -1256,13 +1256,13 @@ def test_swing_hold_takes_profit_intraday_outside_window():
 
 def test_swing_hold_stop_loss_fires_anytime():
     pos = _swing_pos(avg=5.0, mark=2.5, dte=20)  # -50%
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "stop_loss" for a in alerts)
 
 
 def test_swing_hold_near_expiry_cut():
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     # DTE at the cutoff -> force close.
     near = _swing_pos(avg=5.0, mark=4.9, dte=2)
     alerts = evaluate_exit_alerts(near, SWING_RULES, now_et=now)
@@ -1278,7 +1278,7 @@ def test_swing_hold_stop_loss_fires_when_mark_stale():
     pos.mark_quote_stale = True
     pos.pnl_per_contract = -250.0
     pos.pnl_usd = -250.0
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "stop_loss" for a in alerts)
 
@@ -1287,7 +1287,7 @@ def test_swing_hold_stop_loss_fires_in_gth():
     pos = _swing_pos(avg=5.0, mark=2.5, dte=20)  # -50% SL hit
     pos.pnl_per_contract = -250.0
     pos.pnl_usd = -250.0
-    now = datetime(2026, 6, 19, 7, 30, tzinfo=ET)  # GTH morning
+    now = datetime(2026, 6, 18, 7, 30, tzinfo=ET)  # GTH morning
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "stop_loss" for a in alerts)
 
@@ -1297,7 +1297,7 @@ def test_swing_hold_take_profit_suppressed_when_mark_stale():
     pos.mark_quote_stale = True
     pos.pnl_per_contract = 200.0
     pos.pnl_usd = 200.0
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert not any(
         a.exit_reason in ("take_profit", "upper_bb_rejection") for a in alerts
@@ -1308,7 +1308,7 @@ def test_swing_hold_near_expiry_cut_still_fires():
     pos = _swing_pos(avg=5.0, mark=4.9, dte=2)  # dte == max_hold_dte
     pos.pnl_per_contract = -10.0
     pos.pnl_usd = -10.0
-    now = datetime(2026, 6, 19, 13, 0, tzinfo=ET)
+    now = datetime(2026, 6, 18, 13, 0, tzinfo=ET)
     alerts = evaluate_exit_alerts(pos, SWING_RULES, now_et=now)
     assert any(a.exit_reason == "time_stop" for a in alerts)
 
@@ -1387,3 +1387,47 @@ def test_runtime_exit_precedence_tp_then_time_stop_then_hold_cap():
     assert evaluate_exit_alerts(
         baseline_expiry, baseline_rules, now_et=now
     )[0].exit_reason == "time_stop"
+
+
+def test_july_four_closed_session_suppresses_forced_live_exits():
+    now = datetime(2024, 7, 4, 10, 0, tzinfo=ET)
+
+    capped = _swing_pos(avg=5.0, mark=4.9, dte=20)
+    capped.entry_ts = "2024-07-02T15:45:00-04:00"
+    cap_rules = dataclasses.replace(RULES, max_hold_sessions=1)
+    assert evaluate_exit_alerts(capped, cap_rules, now_et=now) == []
+
+    expiring = _swing_pos(avg=5.0, mark=4.9, dte=0)
+    assert evaluate_exit_alerts(expiring, RULES, now_et=now) == []
+
+
+def test_missing_mark_still_allows_time_stop_and_hold_cap():
+    now = datetime(2024, 7, 5, 10, 0, tzinfo=ET)
+
+    expiring = _swing_pos(avg=5.0, mark=None, dte=0)
+    expiry_alerts = evaluate_exit_alerts(expiring, RULES, now_et=now)
+    assert [alert.exit_reason for alert in expiry_alerts] == ["time_stop"]
+    assert expiry_alerts[0].pnl_usd is None
+
+    capped = _swing_pos(avg=5.0, mark=None, dte=20)
+    capped.entry_ts = "2024-07-02T15:45:00-04:00"
+    cap_rules = dataclasses.replace(RULES, max_hold_sessions=2)
+    cap_alerts = evaluate_exit_alerts(capped, cap_rules, now_et=now)
+    assert [alert.exit_reason for alert in cap_alerts] == ["hold_cap"]
+    assert cap_alerts[0].pnl_usd is None
+
+
+def test_missing_mark_does_not_emit_strategy_exit():
+    pos = _swing_pos(avg=5.0, mark=None, dte=20)
+    now = datetime(2024, 7, 5, 10, 0, tzinfo=ET)
+    assert evaluate_exit_alerts(pos, RULES, now_et=now) == []
+
+
+def test_runtime_naive_entry_timestamp_uses_strategy_local_et():
+    pos = _swing_pos(avg=5.0, mark=4.9, dte=20)
+    pos.entry_ts = "2024-06-16T20:15:00"
+    rules = dataclasses.replace(RULES, max_hold_sessions=1)
+    now = datetime(2024, 6, 18, 10, 0, tzinfo=ET)
+    assert [
+        alert.exit_reason for alert in evaluate_exit_alerts(pos, rules, now_et=now)
+    ] == ["hold_cap"]

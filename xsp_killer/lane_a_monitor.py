@@ -33,7 +33,7 @@ from xsp_killer.robinhood_mcp import (
     live_exits_enabled,
     rh_mcp_enabled,
 )
-from xsp_killer.xsp_sessions import trading_sessions_held
+from xsp_killer.xsp_sessions import is_exchange_session, trading_sessions_held
 
 logger = logging.getLogger("xsp_killer.xsp_lane_a")
 
@@ -637,13 +637,13 @@ def _entry_date_et(entry_ts: str | None) -> date | None:
 
 
 def _entry_ts_et(entry_ts: str | None) -> datetime | None:
-    """Parse a persisted entry timestamp, failing closed on invalid values."""
+    """Parse persisted entry time; strategy-local naive values are ET."""
     if not entry_ts:
         return None
     try:
         ts = datetime.fromisoformat(str(entry_ts).replace("Z", "+00:00"))
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=ET)
         return ts.astimezone(ET)
     except (ValueError, TypeError):
         return None
@@ -668,13 +668,10 @@ def evaluate_exit_alerts(
     alerts: list[ExitAlert] = []
     _ = suppress_morning_cut_dte  # retained for call-site compatibility
 
-    if not xsp_session_open(now):
+    if not xsp_session_open(now) or not is_exchange_session(now):
         return alerts
 
     ret_pct = _position_return_pct(pos)
-    if ret_pct is None:
-        return alerts
-
     pnl_c = pos.pnl_per_contract
     pnl = pos.pnl_usd
 
@@ -683,7 +680,7 @@ def evaluate_exit_alerts(
     wide = position_wide_spread(pos)
     allow_take_profit = not pos.mark_quote_stale and not wide
 
-    if ret_pct <= -rules.stop_loss_pct:
+    if ret_pct is not None and ret_pct <= -rules.stop_loss_pct:
         alerts.append(
             ExitAlert(
                 position_id=pos.position_id,
@@ -695,7 +692,11 @@ def evaluate_exit_alerts(
         )
         return alerts
 
-    if allow_take_profit and ret_pct >= rules.take_profit_pct:
+    if (
+        ret_pct is not None
+        and allow_take_profit
+        and ret_pct >= rules.take_profit_pct
+    ):
         can_take = True
         if rules.require_upper_bb_for_take_profit and ta_signal is not None:
             touched = getattr(ta_signal, "upper_bb_touched", False)
@@ -725,13 +726,18 @@ def evaluate_exit_alerts(
 
     time_stop_dte = rules.max_hold_dte if rules.swing_hold else 0
     if pos.dte is not None and pos.dte <= time_stop_dte:
+        return_detail = (
+            f"return {ret_pct * 100:.1f}%"
+            if ret_pct is not None
+            else "return unavailable"
+        )
         alerts.append(
             ExitAlert(
                 position_id=pos.position_id,
                 exit_reason="time_stop",
                 message=(
                     f"Near-expiry cut (DTE {pos.dte} <= {time_stop_dte}, "
-                    f"return {ret_pct * 100:.1f}%)"
+                    f"{return_detail})"
                 ),
                 pnl_usd=pnl,
                 pnl_per_contract=pnl_c,

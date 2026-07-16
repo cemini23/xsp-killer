@@ -2,7 +2,7 @@
 
 XNYS is used as a holiday-session proxy for Cboe index options. XSP's GTH
 evening belongs to the following session date, so Sunday evening and Monday
-daytime intentionally share one key.
+daytime intentionally share one key. Strategy-local naive timestamps are ET.
 """
 
 from __future__ import annotations
@@ -15,6 +15,10 @@ import exchange_calendars as xcals
 
 ET = ZoneInfo("America/New_York")
 GTH_EVENING_START = time(20, 15)
+
+
+class CalendarSessionError(RuntimeError):
+    """Exchange calendar could not answer a configured session query."""
 
 
 def _to_et(ts: datetime) -> datetime:
@@ -38,6 +42,18 @@ def _calendar():
     return xcals.get_calendar("XNYS")
 
 
+def is_exchange_session(ts: datetime) -> bool:
+    """Whether the GTH-mapped key is an actual XNYS-proxy session."""
+    try:
+        key = exchange_session_key(ts)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    try:
+        return bool(_calendar().is_session(key))
+    except Exception as exc:  # calendar backend/API failure must be visible
+        raise CalendarSessionError("exchange calendar session lookup failed") from exc
+
+
 def session_keys_between(start: datetime, end: datetime) -> list[date]:
     """Return XNYS session dates in the inclusive mapped-key interval.
 
@@ -54,8 +70,8 @@ def session_keys_between(start: datetime, end: datetime) -> list[date]:
         sessions = _calendar().sessions_in_range(
             start_key.isoformat(), end_key.isoformat()
         )
-    except (TypeError, ValueError, OverflowError):
-        return []
+    except Exception as exc:  # calendar backend/API failure must be visible
+        raise CalendarSessionError("exchange calendar range lookup failed") from exc
     return [session.date() for session in sessions]
 
 

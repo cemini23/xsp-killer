@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
+import xsp_killer.xsp_sessions as sessions
 from xsp_killer.xsp_sessions import (
     exchange_session_key,
     session_keys_between,
@@ -21,6 +24,21 @@ def et(year: int, month: int, day: int, hour: int, minute: int = 0) -> datetime:
 def test_sunday_evening_and_monday_daytime_share_session_key():
     assert exchange_session_key(et(2024, 6, 16, 20, 15)) == date(2024, 6, 17)
     assert exchange_session_key(et(2024, 6, 17, 10, 0)) == date(2024, 6, 17)
+
+
+def test_naive_strategy_timestamps_are_interpreted_as_et():
+    naive_sunday_evening = datetime(2024, 6, 16, 20, 15)
+    assert exchange_session_key(naive_sunday_evening) == date(2024, 6, 17)
+    assert trading_sessions_held(
+        naive_sunday_evening, et(2024, 6, 18, 10, 0)
+    ) == 1
+
+
+def test_exchange_session_eligibility_honors_holidays_and_gth_mapping():
+    assert sessions.is_exchange_session(et(2024, 7, 4, 10, 0)) is False
+    assert sessions.is_exchange_session(et(2024, 6, 16, 20, 15)) is True
+    assert sessions.is_exchange_session(et(2024, 6, 17, 8, 0)) is True
+    assert sessions.is_exchange_session(et(2024, 6, 14, 20, 15)) is False
 
 
 def test_weekend_does_not_add_exchange_sessions():
@@ -76,3 +94,13 @@ def test_invalid_or_reversed_timestamps_fail_closed():
     assert session_keys_between("not-a-timestamp", valid) == []
     assert trading_sessions_held("not-a-timestamp", valid) == 0
     assert trading_sessions_held(valid, et(2024, 6, 14, 10, 0)) == 0
+
+
+def test_calendar_backend_failures_raise_loudly(monkeypatch):
+    class BrokenCalendar:
+        def sessions_in_range(self, _start, _end):
+            raise ValueError("calendar unavailable")
+
+    monkeypatch.setattr(sessions, "_calendar", lambda: BrokenCalendar())
+    with pytest.raises(RuntimeError, match="calendar"):
+        trading_sessions_held(et(2024, 7, 2, 15, 45), et(2024, 7, 5, 10, 0))

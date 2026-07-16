@@ -861,7 +861,12 @@ def test_replay_zero_hold_cap_is_disabled(tmp_path):
     from xsp_killer.backtest.intraday import run_intraday_backtest
 
     bars, _ = _green_warmup_days(8, start=date(2024, 6, 3))
-    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        max_hold_sessions=1,
+    )
     replay = run_intraday_backtest(
         bars,
         rules,
@@ -870,6 +875,43 @@ def test_replay_zero_hold_cap_is_disabled(tmp_path):
         daily_context=_daily_context_before(bars),
     )
     assert all(row.exit_reason != "hold_cap" for row in replay.trades)
+
+
+@pytest.mark.parametrize(
+    ("yaml_cap", "explicit_cap"),
+    [(2, 1), (1, 2)],
+)
+def test_replay_explicit_hold_cap_overrides_yaml(
+    tmp_path, monkeypatch, yaml_cap, explicit_cap
+):
+    from xsp_killer.backtest import intraday as intrad
+    from xsp_killer.lane_a_monitor import evaluate_exit_alerts as real_evaluate
+
+    bars, _ = _green_warmup_days(8, start=date(2024, 6, 3))
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        max_hold_sessions=yaml_cap,
+    )
+    seen_evaluator_caps: list[int] = []
+
+    def spy_evaluate(pos, lane_rules, **kwargs):
+        seen_evaluator_caps.append(lane_rules.max_hold_sessions)
+        return real_evaluate(pos, lane_rules, **kwargs)
+
+    monkeypatch.setattr(intrad, "evaluate_exit_alerts", spy_evaluate)
+    replay = intrad.run_intraday_backtest(
+        bars,
+        rules,
+        variant_id=f"explicit_{explicit_cap}_yaml_{yaml_cap}",
+        max_hold_sessions=explicit_cap,
+        daily_context=_daily_context_before(bars),
+    )
+    capped = [row for row in replay.trades if row.exit_reason == "hold_cap"]
+    assert capped
+    assert {row.sessions_held for row in capped} == {explicit_cap}
+    assert set(seen_evaluator_caps) == {0}
 
 
 # ---------------------------------------------------------------------------

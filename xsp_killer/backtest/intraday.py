@@ -9,7 +9,7 @@ so Sunday reopen and Monday morning share one hold session.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -44,7 +44,11 @@ from xsp_killer.paper_economics import (
     pnl_from_entry_fill,
     pnl_pct,
 )
-from xsp_killer.xsp_sessions import exchange_session_key, trading_sessions_held
+from xsp_killer.xsp_sessions import (
+    exchange_session_key,
+    is_exchange_session,
+    trading_sessions_held,
+)
 
 logger = logging.getLogger("xsp_killer.backtest.intraday")
 
@@ -348,6 +352,13 @@ def run_intraday_backtest(
     data = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
     knobs = entry_knobs_from_rules_dict(data)
     lane_rules = LaneRules.from_yaml(rules_path)
+    if max_hold_sessions is None:
+        effective_hold_cap = lane_rules.max_hold_sessions
+    elif isinstance(max_hold_sessions, bool) or max_hold_sessions < 0:
+        raise ValueError("max_hold_sessions must be a nonnegative integer")
+    else:
+        effective_hold_cap = int(max_hold_sessions)
+    replay_exit_rules = replace(lane_rules, max_hold_sessions=0)
     ta_rules = TaRules.from_yaml(rules_path)
     econ = PaperEconomics.from_yaml(rules_path)
     premium_scale = econ.premium_scale
@@ -397,7 +408,7 @@ def run_intraday_backtest(
         regime = reg_row["regime"]
         regime_ok = bool(reg_row["regime_ok"])
         yellow_frac = reg_row["yellow_frac"]
-        session_open = xsp_session_open(now_et)
+        session_open = xsp_session_open(now_et) and is_exchange_session(now_et)
 
         # --- mark open positions & evaluate exits (before new entries) ---
         still_open: list[_OpenPos] = []
@@ -429,7 +440,7 @@ def run_intraday_backtest(
 
             # Strategy alerts already require xsp_session_open internally.
             alerts = evaluate_exit_alerts(
-                pos, lane_rules, now_et=now_et, ta_signal=ta_sig
+                pos, replay_exit_rules, now_et=now_et, ta_signal=ta_sig
             )
 
             held_sessions = trading_sessions_held(op.entry_ts, now_et)
@@ -441,9 +452,8 @@ def run_intraday_backtest(
                 if dte <= 0:
                     force_reason = "time_stop"
                 elif (
-                    max_hold_sessions is not None
-                    and max_hold_sessions > 0
-                    and held_sessions >= max_hold_sessions
+                    effective_hold_cap > 0
+                    and held_sessions >= effective_hold_cap
                 ):
                     force_reason = "hold_cap"
 

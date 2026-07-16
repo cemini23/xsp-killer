@@ -611,8 +611,35 @@ def run_intraday_backtest(
         )
         last_entry_date = today
 
-    # Never fabricate residual liquidation — note residual opens only.
+    # Never fabricate residual liquidation. Conservatively mark unresolved
+    # exposure through the normal exit-fill economics, but keep it out of trades.
     if open_book:
-        result.notes.append(f"residual_open={len(open_book)}")
+        last_i = len(bars) - 1
+        last_now = _bar_ts_et(bars.index[last_i])
+        last_spy = float(bars.iloc[last_i]["close"])
+        marked_returns: list[float] = []
+        for op in open_book:
+            dte = max(0, (op.position.expiration_date - last_now.date()).days)
+            mark = synthesize_call_premium(
+                last_spy,
+                xsp_strike=op.position.strike,
+                dte=dte,
+                iv=iv_seed,
+                premium_scale=premium_scale,
+                use_bs=use_bs,
+            )
+            if op.entry_fill > 0:
+                exit_fill = exit_fill_premium(mark, econ)
+                marked_returns.append((exit_fill - op.entry_fill) / op.entry_fill)
+        result.residual_open = len(open_book)
+        result.residual_marked_pnl_pct = (
+            round(sum(marked_returns) / len(marked_returns), 6)
+            if marked_returns
+            else None
+        )
+        result.notes.append(f"residual_open={result.residual_open}")
+        result.notes.append(
+            f"residual_marked_pnl_pct={result.residual_marked_pnl_pct}"
+        )
 
     return result

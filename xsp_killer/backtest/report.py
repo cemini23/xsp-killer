@@ -15,6 +15,72 @@ from xsp_killer.backtest.engine import BacktestResult
 logger = logging.getLogger("xsp_killer.backtest.report")
 
 
+def _draw_session_signs(session_keys: list[str], rng: Any) -> dict[str, float]:
+    """Draw exactly one sign per session for use across the whole family."""
+    values = rng.choice([-1.0, 1.0], size=len(session_keys))
+    return dict(zip(session_keys, values, strict=True))
+
+
+def familywise_max_stat_mcpt(
+    variants: dict[str, list[tuple[str, float]]],
+    *,
+    n_perm: int = 2000,
+    seed: int = 42,
+) -> dict[str, dict[str, Any]]:
+    """Shared-session sign-flip max-statistic test across a variant family."""
+    import numpy as np
+
+    clean: dict[str, list[tuple[str, float]]] = {}
+    for variant_id, observations in variants.items():
+        clean[variant_id] = [
+            (str(session), float(pnl))
+            for session, pnl in observations
+            if np.isfinite(float(pnl))
+        ]
+    session_keys = sorted(
+        {session for observations in clean.values() for session, _ in observations}
+    )
+    observed = {
+        variant_id: (
+            float(np.mean([pnl for _, pnl in observations])) if observations else 0.0
+        )
+        for variant_id, observations in clean.items()
+    }
+    exceedances = {variant_id: 0 for variant_id in clean}
+    rng = np.random.default_rng(seed)
+    for _ in range(int(n_perm)):
+        signs = _draw_session_signs(session_keys, rng)
+        permuted = {
+            variant_id: (
+                float(np.mean([pnl * signs[session] for session, pnl in observations]))
+                if observations
+                else 0.0
+            )
+            for variant_id, observations in clean.items()
+        }
+        max_stat = max(permuted.values(), default=0.0)
+        for variant_id, obs in observed.items():
+            if max_stat >= obs:
+                exceedances[variant_id] += 1
+
+    return {
+        variant_id: {
+            "n_trades": len(clean[variant_id]),
+            "observed_mean_pct": obs,
+            "familywise_p_value": (exceedances[variant_id] + 1)
+            / (int(n_perm) + 1),
+            "familywise_pass_5pct": bool(
+                (exceedances[variant_id] + 1) / (int(n_perm) + 1) < 0.05
+                and obs > 0
+            ),
+            "n_perm": int(n_perm),
+            "n_family_variants": len(clean),
+            "shared_session_signs": True,
+        }
+        for variant_id, obs in observed.items()
+    }
+
+
 def mcpt(
     pnl_pct: Any,
     n_perm: int = 2000,

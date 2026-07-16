@@ -55,6 +55,7 @@ from xsp_killer.backtest.optimize import (  # noqa: E402
 from xsp_killer.backtest.regime_hold import (  # noqa: E402
     StageASpec,
     edge_confirmed,
+    promotion_eligible,
     recommended_regime_hold_yaml,
     run_sensitivity,
     run_stage_a,
@@ -213,6 +214,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Stage B floor: minimum session dates (default 20)",
     )
     p.add_argument(
+        "--min-intraday-trades",
+        type=int,
+        default=20,
+        help="Promotion gate: minimum closed Stage B trades (default 20)",
+    )
+    p.add_argument(
         "--out",
         type=Path,
         default=ROOT / "reports" / "backtest",
@@ -233,8 +240,14 @@ def _build_parser() -> argparse.ArgumentParser:
 def _select_finalists(
     rows: list[dict[str, Any]], *, top_k: int, min_trades: int
 ) -> list[dict[str, Any]]:
-    qualified = [r for r in rows if int(r.get("n_holdout") or 0) >= int(min_trades)]
-    pool = qualified if qualified else list(rows)
+    unique = [r for r in rows if not r.get("behavior_duplicate_of")]
+    qualified = [
+        r
+        for r in unique
+        if int(r.get("n_validation") or r.get("n_holdout") or 0)
+        >= int(min_trades)
+    ]
+    pool = qualified if qualified else unique
     return pool[: min(int(top_k), len(pool))]
 
 
@@ -305,6 +318,10 @@ def _summarize_intraday(res: Any) -> dict[str, Any]:
         "mean_net_pnl_pct": round(mean_p, 6),
         "win_pct": round(100.0 * wins / n, 2) if n else 0.0,
         "n_entries_blocked": int(res.n_entries_blocked),
+        "residual_open": int(getattr(res, "residual_open", 0)),
+        "residual_marked_pnl_pct": getattr(
+            res, "residual_marked_pnl_pct", None
+        ),
         "source": res.source,
         "exit_reasons": {
             r: sum(1 for t in res.trades if t.exit_reason == r)
@@ -366,17 +383,31 @@ def _report_to_markdown(payload: dict[str, Any]) -> str:
         lines.append("")
         ranking = sa.get("ranking") or []
         lines.append(
-            "| # | variant | hold | n_holdout | holdout_mean% | stable | MCPT |"
+            "| variant | hold | n_train | train% | n_val | val% | n_test | "
+            "test% | full% | StageB n/mean | residuals | familywise p | status |"
         )
         lines.append(
-            "|---|---------|------|-----------|---------------|--------|------|"
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|"
         )
-        for i, r in enumerate(ranking[:20], 1):
-            mean_pct = 100 * float(r.get("holdout_mean_net_pnl_pct") or 0.0)
+        for r in ranking[:20]:
+            stage_b = r.get("stage_b") or {}
+            family_p = r.get("familywise_p_value")
+            family_p_text = f"{float(family_p):.4f}" if family_p is not None else "—"
+            stage_b_text = (
+                f"{int(stage_b.get('n_trades') or 0)}/"
+                f"{100 * float(stage_b.get('mean_net_pnl_pct') or 0.0):.2f}%"
+            )
             lines.append(
-                f"| {i} | `{r.get('variant_id')}` | {r.get('max_hold_sessions')} | "
-                f"{r.get('n_holdout')} | {mean_pct:.2f} | "
-                f"{r.get('stable_window')} | {r.get('mcpt_pass_5pct')} |"
+                f"| `{r.get('variant_id')}` | {r.get('max_hold_sessions')} | "
+                f"{r.get('n_train')} | "
+                f"{100 * float(r.get('train_mean_net_pnl_pct') or 0):.2f} | "
+                f"{r.get('n_validation')} | "
+                f"{100 * float(r.get('validation_mean_net_pnl_pct') or 0):.2f} | "
+                f"{r.get('n_test')} | "
+                f"{100 * float(r.get('test_mean_net_pnl_pct') or 0):.2f} | "
+                f"{100 * float(r.get('full_mean_net_pnl_pct') or 0):.2f} | "
+                f"{stage_b_text} | {int(stage_b.get('residual_open') or 0)} | "
+                f"{family_p_text} | {r.get('decision_status', 'RESEARCH ONLY')} |"
             )
         lines.append("")
         wins = sa.get("stable_windows") or []
@@ -577,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": args.mode,
         "kind": "regime_hold_optimizer",
+        "pricing_fidelity": "modeled_bs_lite",
         "disclaimer": (
             "Modeled premiums (BS-lite). Relative research ranker only. "
             "Does NOT replace paper soak. Live trading gates untouched. "
@@ -588,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
             "intraday_period": args.intraday_period,
             "split_frac": args.split_frac,
             "min_trades": args.min_trades,
+            "min_intraday_trades": args.min_intraday_trades,
             "top_k": args.top_k,
             "mcpt": bool(args.mcpt),
             "coarse_to_fine": bool(args.coarse_to_fine),
@@ -763,9 +796,11 @@ def main(argv: list[str] | None = None) -> int:
                         summary["holdout_mean_net_pnl_pct"] = round(hm, 6)
                 results_b.append(summary)
                 intraday_by_id[cell.variant_id] = summary
+                row["stage_b"] = summary
 
         stage_b_block = {
             "fidelity": "intraday_15m_session_aware",
+            "pricing_fidelity": "modeled_bs_lite",
             "source": isource,
             "interval": "15m",
             "coverage": icov,
@@ -814,11 +849,24 @@ def main(argv: list[str] | None = None) -> int:
             sens_for_rec or {},
             intra_for_rec if run_b else None,
             min_trades=int(args.min_trades),
+            min_intraday_trades=int(args.min_intraday_trades),
         )
         # When Stage B not run, edge_confirmed reports intraday_validation_missing
         # which is correct (cannot confirm).
 
-    status = "EDGE-CONFIRMED (inactive)" if edge_ok else "CANDIDATE (least-bad)"
+    pricing_fidelity = str(payload.get("pricing_fidelity") or "modeled_bs_lite")
+    can_promote = promotion_eligible(
+        edge_ok,
+        pricing_fidelity=pricing_fidelity,
+        paper_confirmation=payload.get("paper_confirmation") is True,
+    )
+    status = "RESEARCH-SURVIVOR (inactive)" if edge_ok else "RESEARCH ONLY"
+    for row in ranking:
+        row["decision_status"] = (
+            "RESEARCH-SURVIVOR (inactive)"
+            if row is rec_row and edge_ok
+            else "RESEARCH ONLY"
+        )
     yaml_snip = ""
     if rec_row is not None:
         ov = overrides_by_id.get(str(rec_row.get("variant_id") or ""))
@@ -837,6 +885,8 @@ def main(argv: list[str] | None = None) -> int:
         "variant_id": rec_row.get("variant_id") if rec_row else None,
         "edge_ok": edge_ok,
         "edge_reason": edge_reason,
+        "pricing_fidelity": pricing_fidelity,
+        "promotion_eligible": can_promote,
         "row": rec_row,
         "yaml_snippet": yaml_snip,
     }

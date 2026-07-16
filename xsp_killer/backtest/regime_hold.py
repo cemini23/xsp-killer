@@ -6,6 +6,7 @@ Hold caps live on StageASpec (not as an unknown live YAML key).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import tempfile
 from copy import deepcopy
@@ -24,11 +25,11 @@ from xsp_killer.backtest.optimize import (
     GridBudgetError,
     _mean_pnl,
     _median_pnl,
-    _summarize_split,
     _win_pct,
-    partition_trades_by_split,
+    partition_trades_three_way,
+    summarize_three_way_split,
 )
-from xsp_killer.backtest.report import mcpt
+from xsp_killer.backtest.report import familywise_max_stat_mcpt, mcpt
 from xsp_killer.backtest.sweep import BASE_28DTE_ATM_OVERRIDES, _spec_from_overrides
 from xsp_killer.backtest.variants import rules_path_for_spec
 from xsp_killer.lane_a_variants import VariantSpec, _deep_merge, load_base_rules
@@ -42,12 +43,15 @@ __all__ = [
     "IV_SEEDS",
     "SLIPPAGE_MULTS",
     "StageASpec",
+    "annotate_behavior_duplicates",
     "build_stage_a_grid",
     "edge_confirmed",
+    "promotion_eligible",
     "recommended_regime_hold_yaml",
     "refine_stage_a",
     "run_sensitivity",
     "run_stage_a",
+    "select_train_refinement_seeds",
     "stable_windows",
 ]
 
@@ -402,14 +406,15 @@ def _enrich_row(
     *,
     cell: StageASpec,
     train: list[TradeRow],
-    holdout: list[TradeRow],
+    validation: list[TradeRow],
+    test: list[TradeRow],
     min_trades: int = 8,
 ) -> dict[str, Any]:
     entry = cell.overrides.get("entry") or {}
     exit_cfg = cell.overrides.get("exit") or {}
     train_mean = float(row.get("train_mean_net_pnl_pct") or 0.0)
-    hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
-    n_hold = int(row.get("n_holdout") or 0)
+    validation_mean = float(row.get("validation_mean_net_pnl_pct") or 0.0)
+    n_validation = int(row.get("n_validation") or 0)
     row["max_hold_sessions"] = int(cell.max_hold_sessions)
     row["regime_gate"] = str(entry.get("regime_gate") or "GREEN")
     row["regime_yellow_frac_min"] = entry.get("regime_yellow_frac_min")
@@ -418,11 +423,12 @@ def _enrich_row(
     row["dte_target"] = int(entry.get("dte_target") or COARSE_DTE)
     row["take_profit_pct"] = float(exit_cfg.get("take_profit_pct") or COARSE_TP)
     row["stop_loss_pct"] = float(exit_cfg.get("stop_loss_pct") or COARSE_SL)
-    row["stability_gap"] = round(abs(train_mean - hold_mean), 6)
-    row["full_mean_net_pnl_pct"] = round(_mean_pnl(train + holdout), 6)
-    row["full_median_net_pnl_pct"] = round(_median_pnl(train + holdout), 6)
-    row["full_win_pct"] = _win_pct(train + holdout)
-    row["low_sample"] = bool(n_hold < int(min_trades))
+    row["stability_gap"] = round(abs(train_mean - validation_mean), 6)
+    full = train + validation + test
+    row["full_mean_net_pnl_pct"] = round(_mean_pnl(full), 6)
+    row["full_median_net_pnl_pct"] = round(_median_pnl(full), 6)
+    row["full_win_pct"] = _win_pct(full)
+    row["low_sample"] = bool(n_validation < int(min_trades))
     return row
 
 
@@ -437,13 +443,21 @@ def _rank_key(
     4. holdout median higher
     5. holdout sample size
     """
-    n = int(r.get("n_holdout") or 0)
+    n = int(r.get("n_validation") or r.get("n_holdout") or 0)
     qualified = 1 if n >= int(min_trades) else 0
     return (
         qualified,
-        float(r.get("holdout_mean_net_pnl_pct") or 0.0),
+        float(
+            r.get("validation_mean_net_pnl_pct")
+            if r.get("validation_mean_net_pnl_pct") is not None
+            else (r.get("holdout_mean_net_pnl_pct") or 0.0)
+        ),
         -float(r.get("stability_gap") or 0.0),
-        float(r.get("holdout_median_net_pnl_pct") or 0.0),
+        float(
+            r.get("validation_median_net_pnl_pct")
+            if r.get("validation_median_net_pnl_pct") is not None
+            else (r.get("holdout_median_net_pnl_pct") or 0.0)
+        ),
         n,
     )
 
@@ -459,12 +473,34 @@ def _select_stage_a_finalists(
     Low-sample fallback only if no row meets ``min_trades``; those rows must
     already carry ``low_sample=True`` (set during enrich/rank).
     """
+    unique = [r for r in rows if not r.get("behavior_duplicate_of")]
     qualified = [
-        r for r in rows if int(r.get("n_holdout") or 0) >= int(min_trades)
+        r for r in unique if int(r.get("n_validation") or r.get("n_holdout") or 0)
+        >= int(min_trades)
     ]
-    pool = qualified if qualified else list(rows)
+    pool = qualified if qualified else unique
     k = min(int(top_k), len(pool))
     return pool[:k]
+
+
+def select_train_refinement_seeds(
+    rows: list[dict[str, Any]],
+    *,
+    top_k: int,
+    min_trades: int,
+) -> list[dict[str, Any]]:
+    """Select coarse refinement seeds using train data only."""
+    qualified = [r for r in rows if int(r.get("n_train") or 0) >= int(min_trades)]
+    pool = qualified if qualified else list(rows)
+    ranked = sorted(
+        pool,
+        key=lambda r: (
+            float(r.get("train_mean_net_pnl_pct") or 0.0),
+            int(r.get("n_train") or 0),
+        ),
+        reverse=True,
+    )
+    return ranked[: min(int(top_k), len(ranked))]
 
 
 def run_stage_a(
@@ -495,10 +531,10 @@ def run_stage_a(
     results_by_id: dict[str, BacktestResult] = {}
     cell_by_id: dict[str, StageASpec] = {}
     overrides_by_id: dict[str, dict[str, Any]] = {}
-    split_iso = ""
+    split_cuts: dict[str, str] = {}
 
     def _run_cells(batch: list[StageASpec]) -> None:
-        nonlocal split_iso
+        nonlocal split_cuts
         for cell in batch:
             rpath = rules_path_for_spec(cell.spec, tmp_dir=cache_dir)
             logger.info(
@@ -516,13 +552,13 @@ def run_stage_a(
             results_by_id[cell.variant_id] = res
             cell_by_id[cell.variant_id] = cell
             overrides_by_id[cell.variant_id] = deepcopy(cell.overrides)
-            if not split_iso and res.trades:
-                _, _, split_iso = partition_trades_by_split(
-                    res.trades, bars, split_frac=split_frac
+            if not split_cuts and res.trades:
+                _, _, _, split_cuts = partition_trades_three_way(
+                    res.trades, bars, train_frac=split_frac
                 )
-        if not split_iso:
-            _, _, split_iso = partition_trades_by_split(
-                [], bars, split_frac=split_frac
+        if not split_cuts:
+            _, _, _, split_cuts = partition_trades_three_way(
+                [], bars, train_frac=split_frac
             )
 
     def _rows_from_results(ids: list[str] | None = None) -> list[dict[str, Any]]:
@@ -530,18 +566,28 @@ def run_stage_a(
         for vid in ids if ids is not None else list(results_by_id.keys()):
             res = results_by_id[vid]
             cell = cell_by_id[vid]
-            train, holdout, _ = partition_trades_by_split(
-                res.trades, bars, split_frac=split_frac
+            train, validation, test, _ = partition_trades_three_way(
+                res.trades, bars, train_frac=split_frac
             )
-            row = _summarize_split(
+            row = summarize_three_way_split(
                 train,
-                holdout,
+                validation,
+                test,
                 variant_id=vid,
                 n_entries_blocked=res.n_entries_blocked,
             )
-            row["holdout_pnls"] = [t.net_pnl_pct for t in holdout]
+            row["validation_observations"] = [
+                (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
+                for t in validation
+            ]
+            row["validation_pnls"] = [t.net_pnl_pct for t in validation]
             _enrich_row(
-                row, cell=cell, train=train, holdout=holdout, min_trades=min_trades
+                row,
+                cell=cell,
+                train=train,
+                validation=validation,
+                test=test,
+                min_trades=min_trades,
             )
             out.append(row)
         out.sort(key=lambda r: _rank_key(r, min_trades=min_trades), reverse=True)
@@ -552,7 +598,7 @@ def run_stage_a(
         rows = _rows_from_results()
 
         if coarse_to_fine and rows:
-            seed_rows = _select_stage_a_finalists(
+            seed_rows = select_train_refinement_seeds(
                 rows, top_k=top_k, min_trades=min_trades
             )
             existing = set(results_by_id.keys())
@@ -582,20 +628,47 @@ def run_stage_a(
                 _run_cells(neighbors)
                 rows = _rows_from_results()
 
-        # MCPT only on sample-aware finalists when enabled
+        annotate_behavior_duplicates(
+            rows,
+            {variant_id: result.trades for variant_id, result in results_by_id.items()},
+        )
+        rows.sort(key=lambda r: _rank_key(r, min_trades=min_trades), reverse=True)
+
+        # Validation ranks finalists. The family-wise gate covers every
+        # validation-qualified variant, not merely the selected top-K.
         finalists = _select_stage_a_finalists(
             rows, top_k=top_k, min_trades=min_trades
         )
+        qualified = [
+            row
+            for row in rows
+            if int(row.get("n_validation") or 0) >= int(min_trades)
+        ]
+        family = {
+            str(row.get("variant_id") or ""): list(
+                row.get("validation_observations") or []
+            )
+            for row in qualified
+        }
+        family_results = (
+            familywise_max_stat_mcpt(family, n_perm=int(n_perm))
+            if run_mcpt and family
+            else {}
+        )
         finalist_ids = {str(r.get("variant_id") or "") for r in finalists}
-        mcpt_budget = len(finalists) if run_mcpt else 0
         for row in rows:
-            if run_mcpt and str(row.get("variant_id") or "") in finalist_ids:
-                pnls = row.get("holdout_pnls") or []
+            variant_id = str(row.get("variant_id") or "")
+            if variant_id in family_results:
+                row.update(family_results[variant_id])
+            if run_mcpt and variant_id in finalist_ids:
+                pnls = row.get("validation_pnls") or []
                 m = mcpt(pnls, n_perm=int(n_perm))
-                row["mcpt"] = m
-                row["mcpt_p"] = m.get("p_value")
-                row["mcpt_pass_5pct"] = m.get("pass_5pct")
-            row.pop("holdout_pnls", None)
+                row["exploratory_mcpt"] = {
+                    **m,
+                    "adjustment": "unadjusted_single_variant_exploratory",
+                }
+            row.pop("validation_observations", None)
+            row.pop("validation_pnls", None)
 
         disclaimer = (
             "fidelity=daily_close_proxy: entries use daily close as a "
@@ -611,6 +684,7 @@ def run_stage_a(
             "source": source,
             "kind": "stage_a_regime_hold",
             "fidelity": "daily_close_proxy",
+            "pricing_fidelity": "modeled_bs_lite",
             "disclaimer": disclaimer,
             "grid": {
                 "n_specs": len(results_by_id),
@@ -623,12 +697,17 @@ def run_stage_a(
                 "coarse_to_fine": bool(coarse_to_fine),
             },
             "split": {
-                "split_frac": float(split_frac),
-                "split_ts": split_iso,
+                "train_frac": float(split_frac),
+                "validation_frac": 0.2,
+                "test_frac": round(0.8 - float(split_frac), 6),
+                "train_end": split_cuts.get("train_end"),
+                "validation_end": split_cuts.get("validation_end"),
+                "holdout_compatibility": "holdout aliases validation only",
                 "min_trades": int(min_trades),
             },
             "ranking": rows,
-            "top_k_mcpt": mcpt_budget if run_mcpt else 0,
+            "top_k_mcpt": len(finalists) if run_mcpt else 0,
+            "familywise_mcpt_n_variants": len(family_results),
             "meta": meta or {},
         }
         return payload
@@ -899,15 +978,51 @@ def _are_parameter_adjacent(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return False
 
 
+def _behavior_signature(trades: list[Any]) -> str:
+    ordered = [
+        (str(t.entry_ts), str(t.exit_ts), str(t.exit_reason))
+        for t in sorted(
+            trades,
+            key=lambda t: (str(t.entry_ts), str(t.exit_ts), str(t.exit_reason)),
+        )
+    ]
+    return hashlib.sha256(repr(ordered).encode("utf-8")).hexdigest()
+
+
+def annotate_behavior_duplicates(
+    rows: list[dict[str, Any]],
+    trades_by_id: dict[str, list[Any]],
+) -> None:
+    """Annotate behavior-equivalent rows, preserving the first as canonical."""
+    canonical_by_signature: dict[str, str] = {}
+    for row in rows:
+        variant_id = str(row.get("variant_id") or "")
+        signature = _behavior_signature(trades_by_id.get(variant_id, []))
+        row["behavior_signature"] = signature
+        canonical = canonical_by_signature.get(signature)
+        row["behavior_duplicate_of"] = canonical
+        if canonical is None:
+            canonical_by_signature[signature] = variant_id
+
+
 def stable_windows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Connected components of positive cells linked by parameter adjacency.
 
     Ranking-adjacent rows that are parameter-distant do not form a window.
     """
+    def positive_across_available_splits(row: dict[str, Any]) -> bool:
+        if "validation_mean_net_pnl_pct" not in row:
+            return float(row.get("holdout_mean_net_pnl_pct") or 0.0) > 0
+        return min(
+            float(row.get("train_mean_net_pnl_pct") or 0.0),
+            float(row.get("validation_mean_net_pnl_pct") or 0.0),
+            float(row.get("test_mean_net_pnl_pct") or 0.0),
+        ) > 0
+
     positive = [
         r
         for r in rows
-        if float(r.get("holdout_mean_net_pnl_pct") or 0.0) > 0
+        if not r.get("behavior_duplicate_of") and positive_across_available_splits(r)
     ]
     if len(positive) < 2:
         return []
@@ -966,27 +1081,46 @@ def edge_confirmed(
     intraday_row: dict[str, Any] | None,
     *,
     min_trades: int,
+    min_intraday_trades: int = 20,
 ) -> tuple[bool, str]:
-    """All gates must pass for edge_confirmed; otherwise explain first failure."""
-    hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
-    if hold_mean <= 0:
-        return False, "holdout_mean_not_positive"
+    """Return whether all statistical research-survivor gates pass."""
+    validation_mean = float(
+        row.get("validation_mean_net_pnl_pct")
+        if row.get("validation_mean_net_pnl_pct") is not None
+        else (row.get("holdout_mean_net_pnl_pct") or 0.0)
+    )
+    n_validation = int(
+        row.get("n_validation")
+        if row.get("n_validation") is not None
+        else (row.get("n_holdout") or 0)
+    )
+    if n_validation < int(min_trades):
+        return False, "validation_sample_below_min_trades"
 
-    n_hold = int(row.get("n_holdout") or 0)
-    if n_hold < int(min_trades):
-        return False, "holdout_sample_below_min_trades"
+    split_means = [
+        float(row.get("train_mean_net_pnl_pct") or 0.0),
+        validation_mean,
+        float(row.get("test_mean_net_pnl_pct") or 0.0),
+        float(row.get("full_mean_net_pnl_pct") or 0.0),
+    ]
+    if min(split_means) <= 0:
+        return False, "cross_split_mean_not_positive"
 
-    if row.get("mcpt_pass_5pct") is not True:
-        return False, "mcpt_not_passed"
+    if row.get("familywise_pass_5pct") is not True:
+        return False, "familywise_mcpt_not_passed"
 
     if row.get("stable_window") is not True:
         return False, "no_stable_parameter_window"
 
     if intraday_row is None:
         return False, "intraday_validation_missing"
+    if int(intraday_row.get("n_trades") or 0) < int(min_intraday_trades):
+        return False, "intraday_sample_below_min"
     intra_mean = float(intraday_row.get("mean_net_pnl_pct") or 0.0)
-    if intra_mean < 0:
-        return False, "intraday_negative"
+    if intra_mean <= 0:
+        return False, "intraday_mean_not_positive"
+    if int(intraday_row.get("residual_open") or 0) > 0:
+        return False, "intraday_residual_open"
 
     iv_pos = int(sensitivity.get("iv_positive_count") or 0)
     if iv_pos < 3:
@@ -995,7 +1129,21 @@ def edge_confirmed(
     if sensitivity.get("slippage_1_5x_positive") is not True:
         return False, "slippage_1_5x_not_positive"
 
-    return True, "edge_confirmed"
+    return True, "research_survivor_inactive"
+
+
+def promotion_eligible(
+    edge_ok: bool,
+    *,
+    pricing_fidelity: str,
+    paper_confirmation: bool,
+) -> bool:
+    """Promotion additionally requires real chain pricing and paper confirmation."""
+    return bool(
+        edge_ok
+        and pricing_fidelity == "historical_xsp_chain"
+        and paper_confirmation
+    )
 
 
 def recommended_regime_hold_yaml(
@@ -1007,9 +1155,13 @@ def recommended_regime_hold_yaml(
     max_hold_sessions: int | None = None,
 ) -> str:
     """Always emit ``active: false``; never include LIVE_ enablement text."""
-    n_hold = int(row.get("n_holdout") or 0)
-    hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
-    mcpt_pass = bool(row.get("mcpt_pass_5pct") is True)
+    n_hold = int(row.get("n_validation") or row.get("n_holdout") or 0)
+    hold_mean = float(
+        row.get("validation_mean_net_pnl_pct")
+        if row.get("validation_mean_net_pnl_pct") is not None
+        else (row.get("holdout_mean_net_pnl_pct") or 0.0)
+    )
+    mcpt_pass = bool(row.get("familywise_pass_5pct") is True)
     hold = int(
         max_hold_sessions
         if max_hold_sessions is not None
@@ -1024,10 +1176,11 @@ def recommended_regime_hold_yaml(
         )
 
     vid = str(row.get("variant_id") or "rha_candidate")
-    label = "EDGE-CONFIRMED (inactive)" if edge_ok else "CANDIDATE (least-bad)"
+    label = "RESEARCH-SURVIVOR (inactive)" if edge_ok else "RESEARCH ONLY"
     desc = (
         f"{label} from UW regime/hold Stage A; active:false — human paste only. "
-        f"holdout_mean={hold_mean:.4f} n={n_hold} mcpt_pass={mcpt_pass} "
+        f"validation_mean={hold_mean:.4f} n={n_hold} "
+        f"familywise_mcpt_pass={mcpt_pass} pricing=modeled_bs_lite "
         f"max_hold_sessions={hold} (engine kwarg, not a live YAML key)"
     )
 

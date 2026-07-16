@@ -88,6 +88,8 @@ class BacktestResult:
     bars_used: int = 0
     source: str = "fixture"
     notes: list[str] = field(default_factory=list)
+    residual_open: int = 0
+    residual_marked_pnl_pct: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +100,8 @@ class BacktestResult:
             "bars_used": self.bars_used,
             "source": self.source,
             "notes": list(self.notes),
+            "residual_open": self.residual_open,
+            "residual_marked_pnl_pct": self.residual_marked_pnl_pct,
         }
 
 
@@ -519,7 +523,8 @@ def run_backtest(
             )
             pos.pnl_usd = pos.pnl_per_contract * pos.quantity
             if op.entry_fill > 0:
-                net_pct = (mark - op.entry_fill) / op.entry_fill
+                exit_fill = exit_fill_premium(mark, econ)
+                net_pct = (exit_fill - op.entry_fill) / op.entry_fill
             else:
                 net_pct = 0.0
             held_sessions = i - op.entry_i

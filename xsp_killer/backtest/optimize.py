@@ -1,6 +1,6 @@
 """Centered factorial search around 28 DTE ATM for Lane A.
 
-Train/holdout split + holdout ranking + MCPT on top-K only.
+Train/validation/test selection with family-wise shared-session MCPT.
 Read-only research tool — never flips LIVE_*, never writes secrets.
 """
 
@@ -20,7 +20,7 @@ import pandas as pd
 import yaml
 
 from xsp_killer.backtest.engine import BacktestResult, TradeRow, run_backtest
-from xsp_killer.backtest.report import mcpt
+from xsp_killer.backtest.report import familywise_max_stat_mcpt, mcpt
 from xsp_killer.backtest.sweep import BASE_28DTE_ATM_OVERRIDES, _spec_from_overrides
 from xsp_killer.backtest.variants import rules_path_for_spec
 from xsp_killer.lane_a_variants import VariantSpec, _deep_merge
@@ -257,6 +257,94 @@ def partition_trades_by_split(
     return train, holdout, split_iso
 
 
+def partition_trades_three_way(
+    trades: list[TradeRow],
+    bars: pd.DataFrame,
+    *,
+    train_frac: float = 0.6,
+    validation_frac: float = 0.2,
+) -> tuple[
+    list[TradeRow],
+    list[TradeRow],
+    list[TradeRow],
+    dict[str, str],
+]:
+    """Assign entries to contiguous train, validation, and untouched test periods."""
+    train_f = float(train_frac)
+    validation_f = float(validation_frac)
+    if train_f <= 0 or validation_f <= 0 or train_f + validation_f >= 1:
+        raise ValueError("train_frac and validation_frac must be positive and sum < 1")
+    if bars is None or len(bars) < 3:
+        return [], [], list(trades), {"train_end": "", "validation_end": ""}
+
+    train_i = max(1, min(int(len(bars) * train_f), len(bars) - 2))
+    validation_i = max(
+        train_i + 1,
+        min(int(len(bars) * (train_f + validation_f)), len(bars) - 1),
+    )
+    train_end = pd.Timestamp(bars.index[train_i - 1])
+    validation_end = pd.Timestamp(bars.index[validation_i - 1])
+    if train_end.tzinfo is None:
+        train_end = train_end.tz_localize("America/New_York")
+    if validation_end.tzinfo is None:
+        validation_end = validation_end.tz_localize("America/New_York")
+
+    train: list[TradeRow] = []
+    validation: list[TradeRow] = []
+    test: list[TradeRow] = []
+    for trade in trades:
+        try:
+            entry_ts = pd.Timestamp(trade.entry_ts)
+            if entry_ts.tzinfo is None:
+                entry_ts = entry_ts.tz_localize("America/New_York")
+        except (TypeError, ValueError):
+            test.append(trade)
+            continue
+        if entry_ts <= train_end:
+            train.append(trade)
+        elif entry_ts <= validation_end:
+            validation.append(trade)
+        else:
+            test.append(trade)
+    return train, validation, test, {
+        "train_end": train_end.isoformat(),
+        "validation_end": validation_end.isoformat(),
+    }
+
+
+def summarize_three_way_split(
+    train: list[TradeRow],
+    validation: list[TradeRow],
+    test: list[TradeRow],
+    *,
+    variant_id: str,
+    n_entries_blocked: int = 0,
+) -> dict[str, Any]:
+    """Return complete split metrics with documented holdout compatibility aliases."""
+    full = train + validation + test
+    return {
+        "variant_id": variant_id,
+        "n_train": len(train),
+        "n_validation": len(validation),
+        "n_test": len(test),
+        "n_trades": len(full),
+        "train_mean_net_pnl_pct": round(_mean_pnl(train), 6),
+        "validation_mean_net_pnl_pct": round(_mean_pnl(validation), 6),
+        "test_mean_net_pnl_pct": round(_mean_pnl(test), 6),
+        "full_mean_net_pnl_pct": round(_mean_pnl(full), 6),
+        "validation_median_net_pnl_pct": round(_median_pnl(validation), 6),
+        "validation_win_pct": _win_pct(validation),
+        "train_win_pct": _win_pct(train),
+        "test_win_pct": _win_pct(test),
+        "n_entries_blocked": n_entries_blocked,
+        # Compatibility aliases: holdout now means validation, never test.
+        "n_holdout": len(validation),
+        "holdout_mean_net_pnl_pct": round(_mean_pnl(validation), 6),
+        "holdout_median_net_pnl_pct": round(_median_pnl(validation), 6),
+        "holdout_win_pct": _win_pct(validation),
+    }
+
+
 def _mean_pnl(trades: list[TradeRow]) -> float:
     if not trades:
         return 0.0
@@ -306,17 +394,28 @@ def recommended_variant_yaml(
 ) -> str:
     """Emit a human-apply YAML snippet with ``active: false`` (never auto-LIVE).
 
-    Promote-shape only when holdout mean > 0, MCPT pass, and n ≥ min_trades;
-    otherwise least-bad CANDIDATE. Always ``active: false``.
+    Research-survivor only when validation is positive, family-wise MCPT passes,
+    and n >= min_trades. Modeled pricing is never promotion eligible.
     """
     n_hold = int(row.get("n_holdout") or 0)
     hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
-    mcpt_pass = bool(row.get("mcpt_pass_5pct") is True)
+    mcpt_pass = bool(row.get("familywise_pass_5pct") is True)
     if promote_ok is None:
-        promote_ok = hold_mean > 0 and mcpt_pass and n_hold >= int(min_trades)
+        split_means = [
+            float(row.get(name) or 0.0)
+            for name in (
+                "train_mean_net_pnl_pct",
+                "validation_mean_net_pnl_pct",
+                "test_mean_net_pnl_pct",
+                "full_mean_net_pnl_pct",
+            )
+        ]
+        promote_ok = (
+            min(split_means) > 0 and mcpt_pass and n_hold >= int(min_trades)
+        )
 
     vid = str(row.get("variant_id") or "opt_candidate")
-    label = "PROMOTE-SHAPE" if promote_ok else "CANDIDATE (least-bad)"
+    label = "RESEARCH-SURVIVOR (inactive)" if promote_ok else "RESEARCH ONLY"
     desc = (
         f"{label} from UW-centered optimize; active:false — human paste only. "
         f"holdout_mean={hold_mean:.4f} n={n_hold} mcpt_pass={mcpt_pass}"
@@ -334,7 +433,7 @@ def recommended_variant_yaml(
         }
     }
     header = (
-        "# Paste under config/lane_a_variants.yaml → variants: (human only)\n"
+        "# Paste under config/lane_a_variants.yaml variants: (human only)\n"
         "# Does not flip live trading gates. active: false always.\n"
         f"# status: {label}\n"
     )
@@ -369,10 +468,10 @@ def run_optimize(
 
     results_by_id: dict[str, BacktestResult] = {}
     overrides_by_id: dict[str, dict[str, Any]] = {}
-    split_iso = ""
+    split_cuts: dict[str, str] = {}
 
     def _run_specs(batch: list[VariantSpec]) -> None:
-        nonlocal split_iso
+        nonlocal split_cuts
         for spec in batch:
             rpath = rules_path_for_spec(spec, tmp_dir=cache_dir)
             logger.info("optimize run %s", spec.variant_id)
@@ -386,13 +485,13 @@ def run_optimize(
             )
             results_by_id[spec.variant_id] = res
             overrides_by_id[spec.variant_id] = deepcopy(spec.overrides)
-            if not split_iso and res.trades:
-                _, _, split_iso = partition_trades_by_split(
-                    res.trades, bars, split_frac=split_frac
+            if not split_cuts and res.trades:
+                _, _, _, split_cuts = partition_trades_three_way(
+                    res.trades, bars, train_frac=split_frac
                 )
-        if not split_iso:
-            _, _, split_iso = partition_trades_by_split(
-                [], bars, split_frac=split_frac
+        if not split_cuts:
+            _, _, _, split_cuts = partition_trades_three_way(
+                [], bars, train_frac=split_frac
             )
 
     try:
@@ -400,22 +499,28 @@ def run_optimize(
 
         rows: list[dict[str, Any]] = []
         for vid, res in results_by_id.items():
-            train, holdout, split_iso = partition_trades_by_split(
-                res.trades, bars, split_frac=split_frac
+            train, validation, test, _ = partition_trades_three_way(
+                res.trades, bars, train_frac=split_frac
             )
-            row = _summarize_split(
+            row = summarize_three_way_split(
                 train,
-                holdout,
+                validation,
+                test,
                 variant_id=vid,
                 n_entries_blocked=res.n_entries_blocked,
             )
-            row["holdout_pnls"] = [t.net_pnl_pct for t in holdout]
+            row["validation_pnls"] = [t.net_pnl_pct for t in validation]
+            row["validation_observations"] = [
+                (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
+                for t in validation
+            ]
             rows.append(row)
 
+        # Coarse seeds are selected from train only.
         rows.sort(
             key=lambda r: (
-                float(r.get("holdout_mean_net_pnl_pct") or 0.0),
-                int(r.get("n_holdout") or 0),
+                float(r.get("train_mean_net_pnl_pct") or 0.0),
+                int(r.get("n_train") or 0),
             ),
             reverse=True,
         )
@@ -443,44 +548,82 @@ def run_optimize(
                 _run_specs(neighbors)
                 for spec in neighbors:
                     res = results_by_id[spec.variant_id]
-                    train, holdout, split_iso = partition_trades_by_split(
-                        res.trades, bars, split_frac=split_frac
+                    train, validation, test, _ = partition_trades_three_way(
+                        res.trades, bars, train_frac=split_frac
                     )
-                    row = _summarize_split(
+                    row = summarize_three_way_split(
                         train,
-                        holdout,
+                        validation,
+                        test,
                         variant_id=spec.variant_id,
                         n_entries_blocked=res.n_entries_blocked,
                     )
-                    row["holdout_pnls"] = [t.net_pnl_pct for t in holdout]
+                    row["validation_pnls"] = [
+                        t.net_pnl_pct for t in validation
+                    ]
+                    row["validation_observations"] = [
+                        (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
+                        for t in validation
+                    ]
                     rows.append(row)
-                rows.sort(
-                    key=lambda r: (
-                        float(r.get("holdout_mean_net_pnl_pct") or 0.0),
-                        int(r.get("n_holdout") or 0),
-                    ),
-                    reverse=True,
-                )
 
-        # MCPT on top-K holdout paths only
-        mcpt_budget = min(int(top_k), len(rows))
-        for i, row in enumerate(rows):
-            if run_mcpt and i < mcpt_budget:
-                pnls = row.get("holdout_pnls") or []
+        # Final selection ranks validation only; test metrics remain reporting/gates.
+        rows.sort(
+            key=lambda r: (
+                float(r.get("validation_mean_net_pnl_pct") or 0.0),
+                int(r.get("n_validation") or 0),
+            ),
+            reverse=True,
+        )
+        qualified = [
+            row
+            for row in rows
+            if int(row.get("n_validation") or 0) >= int(min_trades)
+        ]
+        family = {
+            str(row.get("variant_id") or ""): list(
+                row.get("validation_observations") or []
+            )
+            for row in qualified
+        }
+        family_results = (
+            familywise_max_stat_mcpt(family, n_perm=int(n_perm))
+            if run_mcpt and family
+            else {}
+        )
+        finalist_ids = {
+            str(row.get("variant_id") or "")
+            for row in qualified[: min(int(top_k), len(qualified))]
+        }
+        for row in rows:
+            variant_id = str(row.get("variant_id") or "")
+            if variant_id in family_results:
+                row.update(family_results[variant_id])
+            if run_mcpt and variant_id in finalist_ids:
+                pnls = row.get("validation_pnls") or []
                 m = mcpt(pnls, n_perm=int(n_perm))
-                row["mcpt"] = m
-                row["mcpt_p"] = m.get("p_value")
-                row["mcpt_pass_5pct"] = m.get("pass_5pct")
-            # drop raw series from final ranking (keep in trades dump only)
-            row.pop("holdout_pnls", None)
+                row["exploratory_mcpt"] = {
+                    **m,
+                    "adjustment": "unadjusted_single_variant_exploratory",
+                }
+            row.pop("validation_pnls", None)
+            row.pop("validation_observations", None)
 
         # Recommendation
         promote_row = None
         for row in rows:
-            n_h = int(row.get("n_holdout") or 0)
-            mean_h = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
-            pass5 = row.get("mcpt_pass_5pct") is True
-            if mean_h > 0 and pass5 and n_h >= int(min_trades):
+            n_h = int(row.get("n_validation") or 0)
+            split_means = [
+                float(row.get(name) or 0.0)
+                for name in (
+                    "train_mean_net_pnl_pct",
+                    "validation_mean_net_pnl_pct",
+                    "test_mean_net_pnl_pct",
+                    "full_mean_net_pnl_pct",
+                )
+            ]
+            pass5 = row.get("familywise_pass_5pct") is True
+            if min(split_means) > 0 and pass5 and n_h >= int(min_trades):
                 promote_row = row
                 break
         if promote_row is not None:
@@ -488,9 +631,9 @@ def run_optimize(
         else:
             rec_row = rows[0] if rows else None
         rec_status = (
-            "PROMOTE-SHAPE"
+            "RESEARCH-SURVIVOR (inactive)"
             if promote_row is not None
-            else "CANDIDATE (least-bad)"
+            else "RESEARCH ONLY"
         )
         rec_yaml = ""
         if rec_row is not None:
@@ -507,6 +650,7 @@ def run_optimize(
             "mode": mode,
             "source": source,
             "kind": "optimize_centered_28dte_atm",
+            "pricing_fidelity": "modeled_bs_lite",
             "disclaimer": (
                 "Modeled premiums (BS-lite). Relative ranker only. "
                 "Does NOT replace paper soak. Live trading gates untouched. "
@@ -523,14 +667,20 @@ def run_optimize(
                 "refine": bool(refine),
             },
             "split": {
-                "split_frac": float(split_frac),
-                "split_ts": split_iso,
+                "train_frac": float(split_frac),
+                "validation_frac": 0.2,
+                "test_frac": round(0.8 - float(split_frac), 6),
+                "train_end": split_cuts.get("train_end"),
+                "validation_end": split_cuts.get("validation_end"),
+                "holdout_compatibility": "holdout aliases validation only",
                 "min_trades": int(min_trades),
             },
             "ranking": rows,
-            "top_k_mcpt": mcpt_budget if run_mcpt else 0,
+            "top_k_mcpt": len(finalist_ids) if run_mcpt else 0,
+            "familywise_mcpt_n_variants": len(family_results),
             "recommendation": {
                 "status": rec_status,
+                "promotion_eligible": False,
                 "variant_id": rec_row["variant_id"] if rec_row else None,
                 "row": rec_row,
                 "yaml_snippet": rec_yaml,
@@ -557,7 +707,8 @@ def optimize_report_to_markdown(payload: dict[str, Any]) -> str:
     lines.append(f"- grid cells: **{grid.get('n_specs')}** (base={grid.get('base')})")
     split = payload.get("split") or {}
     lines.append(
-        f"- split_frac={split.get('split_frac')} cut=`{split.get('split_ts')}` "
+        f"- split={split.get('train_frac')}/{split.get('validation_frac')}/"
+        f"{split.get('test_frac')} "
         f"min_trades={split.get('min_trades')}"
     )
     lines.append("")
@@ -577,53 +728,49 @@ def optimize_report_to_markdown(payload: dict[str, Any]) -> str:
         lines.append("```")
         lines.append("")
 
-    lines.append("## Ranked table (by holdout mean net %)")
+    lines.append("## Decision table (validation-ranked)")
     lines.append("")
     ranking = payload.get("ranking") or []
-    has_mcpt = any("mcpt_p" in r for r in ranking)
-    if has_mcpt:
-        lines.append(
-            "| rank | variant | n_ho | win% | holdout mean% | train mean% "
-            "| MCPT p | pass@5% |"
-        )
-        lines.append(
-            "| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |"
-        )
-    else:
-        lines.append(
-            "| rank | variant | n_ho | win% | holdout mean% | train mean% |"
-        )
-        lines.append("| ---: | --- | ---: | ---: | ---: | ---: |")
+    lines.append(
+        "| variant | n_train | train% | n_val | val% | n_test | test% | "
+        "full% | familywise p | adjusted pass | status |"
+    )
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
 
-    for i, r in enumerate(ranking, 1):
-        if has_mcpt:
-            p = r.get("mcpt_p")
-            p_s = f"{p:.4f}" if isinstance(p, float) else "—"
-            pass_s = str(r.get("mcpt_pass_5pct")) if "mcpt_pass_5pct" in r else "—"
-            lines.append(
-                f"| {i} | `{r['variant_id']}` | {r.get('n_holdout', 0)} | "
-                f"{r.get('holdout_win_pct', 0):.1f} | "
-                f"{100 * float(r.get('holdout_mean_net_pnl_pct') or 0):.2f} | "
-                f"{100 * float(r.get('train_mean_net_pnl_pct') or 0):.2f} | "
-                f"{p_s} | {pass_s} |"
-            )
-        else:
-            lines.append(
-                f"| {i} | `{r['variant_id']}` | {r.get('n_holdout', 0)} | "
-                f"{r.get('holdout_win_pct', 0):.1f} | "
-                f"{100 * float(r.get('holdout_mean_net_pnl_pct') or 0):.2f} | "
-                f"{100 * float(r.get('train_mean_net_pnl_pct') or 0):.2f} |"
-            )
+    for r in ranking:
+        family_p = r.get("familywise_p_value")
+        family_p_text = f"{float(family_p):.4f}" if family_p is not None else "—"
+        all_positive = min(
+            float(r.get("train_mean_net_pnl_pct") or 0.0),
+            float(r.get("validation_mean_net_pnl_pct") or 0.0),
+            float(r.get("test_mean_net_pnl_pct") or 0.0),
+            float(r.get("full_mean_net_pnl_pct") or 0.0),
+        ) > 0
+        status = (
+            "RESEARCH-SURVIVOR (inactive)"
+            if all_positive and r.get("familywise_pass_5pct") is True
+            else "RESEARCH ONLY"
+        )
+        lines.append(
+            f"| `{r['variant_id']}` | {r.get('n_train', 0)} | "
+            f"{100 * float(r.get('train_mean_net_pnl_pct') or 0):.2f} | "
+            f"{r.get('n_validation', 0)} | "
+            f"{100 * float(r.get('validation_mean_net_pnl_pct') or 0):.2f} | "
+            f"{r.get('n_test', 0)} | "
+            f"{100 * float(r.get('test_mean_net_pnl_pct') or 0):.2f} | "
+            f"{100 * float(r.get('full_mean_net_pnl_pct') or 0):.2f} | "
+            f"{family_p_text} | {r.get('familywise_pass_5pct')} | {status} |"
+        )
 
     lines.append("")
     lines.append("## Top survivors (first 8)")
     lines.append("")
     for r in ranking[:8]:
         lines.append(
-            f"- `{r['variant_id']}`: holdout_mean="
-            f"{100 * float(r.get('holdout_mean_net_pnl_pct') or 0):.2f}% "
-            f"n_holdout={r.get('n_holdout')} "
-            f"mcpt_pass={r.get('mcpt_pass_5pct')}"
+            f"- `{r['variant_id']}`: validation_mean="
+            f"{100 * float(r.get('validation_mean_net_pnl_pct') or 0):.2f}% "
+            f"n_validation={r.get('n_validation')} "
+            f"familywise_pass={r.get('familywise_pass_5pct')}"
         )
     lines.append("")
     return "\n".join(lines) + "\n"

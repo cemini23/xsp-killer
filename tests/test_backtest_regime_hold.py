@@ -16,8 +16,10 @@ from xsp_killer.backtest.regime_hold import (
     _base_paper_economics,
     _rank_key,
     _select_stage_a_finalists,
+    annotate_behavior_duplicates,
     build_stage_a_grid,
     edge_confirmed,
+    promotion_eligible,
     recommended_regime_hold_yaml,
     refine_stage_a,
     run_sensitivity,
@@ -652,12 +654,133 @@ def test_stable_windows_require_adjacent_parameter_settings():
     assert stable_windows(ranking_adjacent_only) == []
 
 
+def test_behavioral_clones_do_not_form_stability_or_consume_finalist_quota():
+    from types import SimpleNamespace
+
+    base = {
+        "train_mean_net_pnl_pct": 0.04,
+        "validation_mean_net_pnl_pct": 0.03,
+        "test_mean_net_pnl_pct": 0.02,
+        "full_mean_net_pnl_pct": 0.03,
+        "n_validation": 12,
+        "n_holdout": 12,
+        "max_hold_sessions": 1,
+        "regime_gate": "GREEN",
+        "prior_day_spy_positive": False,
+        "regime_yellow_frac_min": None,
+        "dte_target": 28,
+        "take_profit_pct": 0.20,
+        "stop_loss_pct": 0.30,
+    }
+    rows = [
+        dict(base, variant_id="original"),
+        dict(base, variant_id="clone", max_hold_sessions=2),
+        dict(base, variant_id="distinct", max_hold_sessions=3),
+    ]
+    shared = [
+        SimpleNamespace(entry_ts="2026-01-02", exit_ts="2026-01-03", exit_reason="tp")
+    ]
+    distinct = [
+        SimpleNamespace(entry_ts="2026-01-02", exit_ts="2026-01-04", exit_reason="tp")
+    ]
+    annotate_behavior_duplicates(
+        rows,
+        {"original": shared, "clone": list(shared), "distinct": distinct},
+    )
+    assert rows[1]["behavior_duplicate_of"] == "original"
+    assert stable_windows(rows) == []
+    finalists = _select_stage_a_finalists(rows, top_k=3, min_trades=8)
+    assert [row["variant_id"] for row in finalists] == ["original", "distinct"]
+
+    from scripts.optimize_regime_hold import _select_finalists
+
+    cli_finalists = _select_finalists(rows, top_k=3, min_trades=8)
+    assert [row["variant_id"] for row in cli_finalists] == [
+        "original",
+        "distinct",
+    ]
+
+
+def test_distinct_adjacent_positive_behaviors_can_form_stability():
+    rows = [
+        {
+            "variant_id": variant,
+            "train_mean_net_pnl_pct": 0.04,
+            "validation_mean_net_pnl_pct": 0.03,
+            "test_mean_net_pnl_pct": 0.02,
+            "full_mean_net_pnl_pct": 0.03,
+            "max_hold_sessions": hold,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+            "behavior_signature": variant,
+        }
+        for variant, hold in [("a", 1), ("b", 2)]
+    ]
+    assert stable_windows(rows)[0]["member_ids"] == ["a", "b"]
+
+
+def test_markdown_decision_table_exposes_conflicting_metrics():
+    from scripts.optimize_regime_hold import _report_to_markdown
+
+    payload = {
+        "generated_at": "now",
+        "mode": "fixture",
+        "recommendation": {"status": "RESEARCH ONLY"},
+        "stage_a": {
+            "fidelity": "daily_close_proxy",
+            "source": "fixture",
+            "ranking": [
+                {
+                    "variant_id": "conflict",
+                    "max_hold_sessions": 2,
+                    "n_train": 10,
+                    "train_mean_net_pnl_pct": 0.10,
+                    "n_validation": 4,
+                    "validation_mean_net_pnl_pct": -0.02,
+                    "n_test": 3,
+                    "test_mean_net_pnl_pct": 0.03,
+                    "full_mean_net_pnl_pct": 0.01,
+                    "familywise_p_value": 0.2,
+                    "familywise_pass_5pct": False,
+                    "decision_status": "RESEARCH ONLY",
+                    "stage_b": {
+                        "n_trades": 2,
+                        "mean_net_pnl_pct": -0.1,
+                        "residual_open": 1,
+                    },
+                }
+            ],
+        },
+    }
+    text = _report_to_markdown(payload)
+    first_table = text.split("|", 1)[1]
+    assert "train%" in first_table
+    assert "val%" in first_table
+    assert "test%" in first_table
+    assert "full%" in first_table
+    assert "StageB n/mean" in first_table
+    assert "residuals" in first_table
+    assert "familywise p" in first_table
+    assert "10.00" in text and "-2.00" in text and "3.00" in text
+    assert "CANDIDATE" not in text
+    assert "EDGE-CONFIRMED" not in text
+
+
 def test_edge_confirmed_requires_all_gates():
     good_row = {
         "variant_id": "good",
+        "train_mean_net_pnl_pct": 0.04,
+        "validation_mean_net_pnl_pct": 0.05,
+        "test_mean_net_pnl_pct": 0.03,
+        "full_mean_net_pnl_pct": 0.04,
         "holdout_mean_net_pnl_pct": 0.05,
+        "n_validation": 12,
         "n_holdout": 12,
-        "mcpt_pass_5pct": True,
+        "familywise_pass_5pct": True,
         "stable_window": True,
     }
     sens_ok = {
@@ -666,24 +789,34 @@ def test_edge_confirmed_requires_all_gates():
         "slippage_1_5x_positive": True,
         "cells": [],
     }
-    intraday_ok = {"mean_net_pnl_pct": 0.01}
+    intraday_ok = {
+        "n_trades": 20,
+        "mean_net_pnl_pct": 0.01,
+        "residual_open": 0,
+    }
 
-    ok, reason = edge_confirmed(good_row, sens_ok, intraday_ok, min_trades=8)
+    ok, reason = edge_confirmed(
+        good_row,
+        sens_ok,
+        intraday_ok,
+        min_trades=8,
+        min_intraday_trades=20,
+    )
     assert ok is True
-    assert "confirmed" in reason.lower() or reason == "edge_confirmed"
+    assert reason == "research_survivor_inactive"
 
-    # Fail: negative holdout
-    bad = dict(good_row, holdout_mean_net_pnl_pct=-0.01)
+    # Fail: negative validation
+    bad = dict(good_row, validation_mean_net_pnl_pct=-0.01)
     ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
     assert ok is False
 
     # Fail: insufficient sample
-    bad = dict(good_row, n_holdout=3)
+    bad = dict(good_row, n_validation=3)
     ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
     assert ok is False
 
     # Fail: MCPT
-    bad = dict(good_row, mcpt_pass_5pct=False)
+    bad = dict(good_row, familywise_pass_5pct=False)
     ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
     assert ok is False
 
@@ -707,6 +840,85 @@ def test_edge_confirmed_requires_all_gates():
     sens_bad_slip = dict(sens_ok, slippage_1_5x_positive=False)
     ok, _ = edge_confirmed(good_row, sens_bad_slip, intraday_ok, min_trades=8)
     assert ok is False
+
+
+@pytest.mark.parametrize(
+    ("intraday", "reason"),
+    [
+        (
+            {"n_trades": 0, "mean_net_pnl_pct": 0.1, "residual_open": 0},
+            "intraday_sample_below_min",
+        ),
+        (
+            {"n_trades": 20, "mean_net_pnl_pct": 0.0, "residual_open": 0},
+            "intraday_mean_not_positive",
+        ),
+        (
+            {"n_trades": 20, "mean_net_pnl_pct": 0.1, "residual_open": 1},
+            "intraday_residual_open",
+        ),
+    ],
+)
+def test_edge_confirmed_rejects_weak_intraday(intraday, reason):
+    row = {
+        "n_validation": 12,
+        "validation_mean_net_pnl_pct": 0.05,
+        "train_mean_net_pnl_pct": 0.04,
+        "test_mean_net_pnl_pct": 0.03,
+        "full_mean_net_pnl_pct": 0.04,
+        "familywise_pass_5pct": True,
+        "stable_window": True,
+    }
+    sensitivity = {
+        "iv_positive_count": 3,
+        "slippage_1_5x_positive": True,
+    }
+    assert edge_confirmed(
+        row,
+        sensitivity,
+        intraday,
+        min_trades=8,
+        min_intraday_trades=20,
+    ) == (False, reason)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "train_mean_net_pnl_pct",
+        "validation_mean_net_pnl_pct",
+        "test_mean_net_pnl_pct",
+        "full_mean_net_pnl_pct",
+    ],
+)
+@pytest.mark.parametrize("value", [0.0, -0.01])
+def test_edge_confirmed_rejects_nonpositive_cross_split(field, value):
+    row = {
+        "n_validation": 12,
+        "train_mean_net_pnl_pct": 0.04,
+        "validation_mean_net_pnl_pct": 0.05,
+        "test_mean_net_pnl_pct": 0.03,
+        "full_mean_net_pnl_pct": 0.04,
+        "familywise_pass_5pct": True,
+        "stable_window": True,
+        field: value,
+    }
+    sensitivity = {
+        "iv_positive_count": 3,
+        "slippage_1_5x_positive": True,
+    }
+    intraday = {
+        "n_trades": 20,
+        "mean_net_pnl_pct": 0.01,
+        "residual_open": 0,
+    }
+    assert edge_confirmed(
+        row,
+        sensitivity,
+        intraday,
+        min_trades=8,
+        min_intraday_trades=20,
+    ) == (False, "cross_split_mean_not_positive")
 
 
 def test_recommended_yaml_always_inactive_no_live_text():
@@ -738,3 +950,22 @@ def test_recommended_yaml_always_inactive_no_live_text():
     assert "LIVE_" not in text2
     # Hold is documented in description, not as unknown live key in overrides dump
     assert "max_hold_sessions" not in (ov.get("exit") or {})
+
+
+def test_modeled_pricing_is_never_promotion_eligible():
+    assert (
+        promotion_eligible(
+            True,
+            pricing_fidelity="modeled_bs_lite",
+            paper_confirmation=True,
+        )
+        is False
+    )
+    assert (
+        promotion_eligible(
+            True,
+            pricing_fidelity="historical_xsp_chain",
+            paper_confirmation=False,
+        )
+        is False
+    )

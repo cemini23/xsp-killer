@@ -22,7 +22,12 @@ from xsp_killer.backtest.option_model import bs_call, synthesize_call_premium
 from xsp_killer.backtest.report import build_report, mcpt, write_report
 from xsp_killer.backtest.sweep import run_variant_sweep, write_merged_rules_dict
 from xsp_killer.lane_a_monitor import evaluate_exit_alerts
-from xsp_killer.paper_economics import entry_fill_premium, exit_fill_premium
+from xsp_killer.paper_economics import (
+    PaperEconomics,
+    entry_fill_premium,
+    exit_fill_premium,
+    pnl_from_entry_fill,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 ET = ZoneInfo("America/New_York")
@@ -503,3 +508,28 @@ def test_exit_fill_premium_used_in_ranking_math():
     assert exit_ < 6.0
     assert entry > 5.0
     assert exit_ > entry  # still profitable after costs
+
+
+def test_end_of_series_percent_and_dollars_share_exit_fill_economics(tmp_path):
+    bars = _green_uptrend(52, step=0.1)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=5.0,
+        stop_loss_pct=5.0,
+        dte_target=28,
+    )
+    result = run_backtest(bars, rules, variant_id="eos_economics")
+    eos = [trade for trade in result.trades if trade.exit_reason == "end_of_series"]
+    assert eos
+
+    econ = PaperEconomics.from_yaml(rules)
+    trade = eos[0]
+    exit_fill = exit_fill_premium(trade.exit_mid, econ)
+    expected_pct = (exit_fill - trade.entry_fill) / trade.entry_fill
+    expected_usd = pnl_from_entry_fill(
+        entry_fill=trade.entry_fill,
+        exit_mid=trade.exit_mid,
+        econ=econ,
+    )
+    assert trade.net_pnl_pct == round(expected_pct, 6)
+    assert trade.pnl_usd == round(expected_usd, 2)

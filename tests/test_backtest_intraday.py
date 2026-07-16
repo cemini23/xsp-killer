@@ -1165,8 +1165,16 @@ def test_no_residual_end_of_series_liquidation(tmp_path):
         daily_context=_daily_context_before(bars),
     )
     assert all(t.exit_reason != "end_of_series" for t in res.trades)
+    assert res.residual_open > 0
+    assert res.residual_marked_pnl_pct is not None
     residual_notes = [n for n in res.notes if "residual" in n.lower()]
     assert residual_notes, f"expected residual note, got {res.notes}"
+
+    from scripts.optimize_regime_hold import _summarize_intraday
+
+    summary = _summarize_intraday(res)
+    assert summary["residual_open"] == res.residual_open
+    assert summary["residual_marked_pnl_pct"] == res.residual_marked_pnl_pct
 
 
 def test_final_bar_entry_cannot_produce_same_ts_end_of_series(tmp_path):

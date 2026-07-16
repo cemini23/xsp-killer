@@ -1582,7 +1582,9 @@ def test_opt_candidate_is_inactive():
 
     # Lock approved candidate overrides (UW optimizer leader; soak-inactive).
     ov = candidate.overrides
+    assert ov["logging"]["logic_version"] == "xsp_lane_a_opt_dte28_tp20_sl30_gyb"
     entry = ov["entry"]
+    assert entry["dte_pick"] == "target"
     assert entry["dte_target"] == 28
     assert entry["strike_pick"] == "atm_only"
     assert entry["regime_gate"] == "GREEN_OR_YELLOW_BOUNCE"
@@ -1598,3 +1600,4 @@ def test_opt_candidate_is_inactive():
     assert exit_cfg["stop_loss_pct"] == 0.30
     assert exit_cfg["require_upper_bb_for_take_profit"] is False
     assert exit_cfg["swing_hold"] is False
+    assert exit_cfg["max_hold_dte"] == 0

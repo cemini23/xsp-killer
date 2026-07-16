@@ -165,6 +165,96 @@ def test_concurrent_direct_variant_entries_preserve_both_updates(
     assert set(persisted["variants"]) == {"race_a", "race_b"}
 
 
+def test_direct_entry_reloads_in_lock_instead_of_using_stale_root(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "variants-state.json"
+    stale_root = {"variants": {"A": {"entry_log": []}}}
+    state.write_text(
+        json.dumps(
+            {
+                "variants": {
+                    "A": {"entry_log": []},
+                    "B": {"entry_log": [{"persisted": True}]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "briefs").mkdir()
+    (tmp_path / "logs").mkdir()
+    monkeypatch.setattr(lane_a_variants, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        lane_a_variants,
+        "merged_rules_path",
+        lambda _spec: tmp_path / "rules.yaml",
+    )
+
+    def fake_entry(*, state_path, **_kwargs):
+        slice_state = json.loads(state_path.read_text(encoding="utf-8"))
+        slice_state["entry_log"] = [{"added": "C"}]
+        state_path.write_text(json.dumps(slice_state), encoding="utf-8")
+        return SimpleNamespace(entered=False, position=None)
+
+    monkeypatch.setattr(lane_a_variants, "run_paper_entry", fake_entry)
+
+    run_variant_entry(
+        VariantSpec("C", "new entry update", True, {}),
+        root_state=stale_root,
+        state_path=state,
+    )
+
+    persisted = json.loads(state.read_text(encoding="utf-8"))
+    assert set(persisted["variants"]) == {"A", "B", "C"}
+    assert persisted["variants"]["B"]["entry_log"] == [{"persisted": True}]
+    assert persisted["variants"]["C"]["entry_log"] == [{"added": "C"}]
+
+
+def test_direct_monitor_reloads_in_lock_instead_of_using_stale_root(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "variants-state.json"
+    stale_root = {"variants": {"A": {"paper_events": []}}}
+    state.write_text(
+        json.dumps(
+            {
+                "variants": {
+                    "A": {"paper_events": []},
+                    "B": {"paper_events": [{"persisted": True}]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "briefs").mkdir()
+    (tmp_path / "logs").mkdir()
+    monkeypatch.setattr(lane_a_variants, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        lane_a_variants,
+        "merged_rules_path",
+        lambda _spec: tmp_path / "rules.yaml",
+    )
+
+    def fake_monitor(*, state_path, **_kwargs):
+        slice_state = json.loads(state_path.read_text(encoding="utf-8"))
+        slice_state["paper_events"] = [{"added": "C"}]
+        state_path.write_text(json.dumps(slice_state), encoding="utf-8")
+        return SimpleNamespace(positions=[], alerts=[])
+
+    monkeypatch.setattr(lane_a_variants, "run_monitor", fake_monitor)
+
+    lane_a_variants.run_variant_monitor(
+        VariantSpec("C", "new monitor update", True, {}),
+        root_state=stale_root,
+        state_path=state,
+    )
+
+    persisted = json.loads(state.read_text(encoding="utf-8"))
+    assert set(persisted["variants"]) == {"A", "B", "C"}
+    assert persisted["variants"]["B"]["paper_events"] == [{"persisted": True}]
+    assert persisted["variants"]["C"]["paper_events"] == [{"added": "C"}]
+
+
 def test_load_variant_specs():
     specs = load_variant_specs()
     assert len(specs) >= 11

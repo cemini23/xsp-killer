@@ -272,12 +272,19 @@ def run_variant_entry(
     force: bool = False,
     intraday: bool = False,
 ) -> Any:
-    """Run one entry as a complete, locked state transaction."""
-    with _variants_rmw_lock(state_path):
+    """Run one entry as a complete, locked state transaction.
+
+    ``root_state`` is advisory unless this thread already owns the exact
+    state's sidecar lock; otherwise state is reloaded after lock acquisition.
+    """
+    p = state_path or DEFAULT_VARIANTS_STATE
+    key = str(_variants_lock_path(p).resolve())
+    already_locked = key in _held_variants_locks()
+    with _variants_rmw_lock(p):
         return _run_variant_entry_locked(
             spec,
-            root_state=root_state,
-            state_path=state_path,
+            root_state=root_state if already_locked else None,
+            state_path=p,
             now_et=now_et,
             force=force,
             intraday=intraday,
@@ -330,12 +337,19 @@ def run_variant_monitor(
     state_path: Path | None = None,
     now_et: datetime | None = None,
 ) -> Any:
-    """Run one monitor pass as a complete, locked state transaction."""
-    with _variants_rmw_lock(state_path):
+    """Run one monitor pass as a complete, locked state transaction.
+
+    ``root_state`` is advisory unless this thread already owns the exact
+    state's sidecar lock; otherwise state is reloaded after lock acquisition.
+    """
+    p = state_path or DEFAULT_VARIANTS_STATE
+    key = str(_variants_lock_path(p).resolve())
+    already_locked = key in _held_variants_locks()
+    with _variants_rmw_lock(p):
         return _run_variant_monitor_locked(
             spec,
-            root_state=root_state,
-            state_path=state_path,
+            root_state=root_state if already_locked else None,
+            state_path=p,
             now_et=now_et,
         )
 
@@ -414,7 +428,7 @@ def run_all_variant_entries(
             if intraday_only and not _variant_intraday_enabled(spec):
                 continue
             try:
-                decision = run_variant_entry(
+                decision = _run_variant_entry_locked(
                     spec,
                     root_state=root,
                     state_path=state_path,
@@ -462,7 +476,7 @@ def run_all_variant_monitors(
             if intraday_only and not _variant_intraday_enabled(spec):
                 continue
             try:
-                report = run_variant_monitor(
+                report = _run_variant_monitor_locked(
                     spec, root_state=root, state_path=state_path, now_et=now_et
                 )
                 results.append((spec, report))

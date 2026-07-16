@@ -67,7 +67,7 @@ AXIS_GRIDS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-# Dip-swing base for micro-sweeps (matches operator thesis defaults).
+# Dip-swing base kept for reference / legacy docs (not used by micro-sweeps).
 DIP_SWING_BASE_OVERRIDES: dict[str, Any] = {
     "logging": {"logic_version": "xsp_lane_a_bt_dip_base"},
     "entry": {
@@ -90,6 +90,33 @@ DIP_SWING_BASE_OVERRIDES: dict[str, Any] = {
         "require_upper_bb_for_take_profit": False,
         "swing_hold": True,
         "max_hold_dte": 2,
+    },
+}
+
+# 28 DTE ATM cluster base (least-bad on UW BT 2026-07-16). Micro-sweeps center here.
+BASE_28DTE_ATM_OVERRIDES: dict[str, Any] = {
+    "logging": {"logic_version": "xsp_lane_a_bt_28dte_atm_base"},
+    "entry": {
+        "dte_pick": "target",
+        "dte_target": 28,
+        "strike_pick": "atm_only",
+        "regime_gate": "GREEN",
+        "prior_day_spy_positive": False,
+    },
+    "paper_entry": {"max_open_positions": 1},
+    "ta": {
+        "entry": {
+            "mode": "close_window_only",
+            "intraday_enabled": False,
+            "require_vwap_reclaim": False,
+        }
+    },
+    "exit": {
+        "take_profit_pct": 0.10,
+        "stop_loss_pct": 0.20,
+        "require_upper_bb_for_take_profit": False,
+        "swing_hold": False,
+        "max_hold_dte": 0,
     },
 }
 
@@ -122,12 +149,12 @@ def _spec_from_overrides(
 
 
 def build_sweep_specs(axes: Iterable[str]) -> list[VariantSpec]:
-    """One-axis-at-a-time micro-sweep around the dip-swing base (not full factorial)."""
+    """One-axis micro-sweep around the 28 DTE ATM base (not full factorial)."""
     specs: list[VariantSpec] = []
     for axis in axes:
         grid = AXIS_GRIDS[axis]
         for j, patch in enumerate(grid):
-            merged = _deep_merge(deepcopy(DIP_SWING_BASE_OVERRIDES), patch)
+            merged = _deep_merge(deepcopy(BASE_28DTE_ATM_OVERRIDES), patch)
             # stamp logic_version
             logging_cfg = merged.setdefault("logging", {})
             label = _axis_label(axis, patch)

@@ -17,7 +17,6 @@ from statistics import median
 from typing import Any
 
 import pandas as pd
-
 import yaml
 
 from xsp_killer.backtest.engine import BacktestResult, TradeRow, run_backtest
@@ -210,7 +209,9 @@ def build_stage_a_grid(
     """
     if not coarse:
         # Fine grid is produced via refine_stage_a from survivors.
-        raise ValueError("fine grid is produced by refine_stage_a, not build_stage_a_grid")
+        raise ValueError(
+            "fine grid is produced by refine_stage_a, not build_stage_a_grid"
+        )
 
     n = len(REGIMES) * len(PRIOR_MODES) * len(HOLD_SESSIONS_GRID)
     if n > max_grid and not allow_large:
@@ -251,7 +252,9 @@ def _regime_label_from_entry(entry: dict[str, Any]) -> str:
     return f"gyb{int(round(frac * 100))}b{int(bounce)}"
 
 
-def _row_seed_fields(row: dict[str, Any], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+def _row_seed_fields(
+    row: dict[str, Any], overrides: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Normalize seed fields from ranking row and/or overrides."""
     ov = overrides or {}
     entry = ov.get("entry") or {}
@@ -493,12 +496,22 @@ def run_stage_a(
             budget_left = max(0, int(max_grid) - len(existing))
             if allow_large:
                 budget_left = max(budget_left, 120)
+            refine_budget = (
+                budget_left
+                if not allow_large
+                else min(120, budget_left or 120)
+            )
+            refine_max = (
+                max_grid
+                if not allow_large
+                else max(max_grid, len(existing) + 120)
+            )
             neighbors = refine_stage_a(
                 seed_rows,
                 existing_ids=existing,
-                budget_remaining=budget_left if not allow_large else min(120, budget_left or 120),
+                budget_remaining=refine_budget,
                 allow_large=allow_large,
-                max_grid=max_grid if not allow_large else max(max_grid, len(existing) + 120),
+                max_grid=refine_max,
                 overrides_by_id=overrides_by_id,
             )
             if neighbors:
@@ -518,10 +531,11 @@ def run_stage_a(
             row.pop("holdout_pnls", None)
 
         disclaimer = (
-            "fidelity=daily_close_proxy: entries use daily close as a close-window "
-            "proxy; exits checked once per daily bar (not intraday). Modeled premiums "
-            "(BS-lite). Relative ranker only. Does NOT replace paper soak. Live trading "
-            "gates untouched. YAML snippet is active:false — human paste only."
+            "fidelity=daily_close_proxy: entries use daily close as a "
+            "close-window proxy; exits checked once per daily bar "
+            "(not intraday). Modeled premiums (BS-lite). Relative ranker only. "
+            "Does NOT replace paper soak. Live trading gates untouched. "
+            "YAML snippet is active:false — human paste only."
         )
 
         payload: dict[str, Any] = {
@@ -571,9 +585,13 @@ def _base_paper_economics() -> dict[str, float]:
     base = load_base_rules()
     pe = dict(base.get("paper_economics") or {})
     return {
-        "commission_usd_per_contract": float(pe.get("commission_usd_per_contract", 0.65)),
+        "commission_usd_per_contract": float(
+            pe.get("commission_usd_per_contract", 0.65)
+        ),
         "slippage_usd_per_share": float(pe.get("slippage_usd_per_share", 0.12)),
-        "slippage_pct_of_premium": float(pe.get("slippage_pct_of_premium", 0.005)),
+        "slippage_pct_of_premium": float(
+            pe.get("slippage_pct_of_premium", 0.005)
+        ),
         "slippage_max_pct_of_premium": float(
             pe.get("slippage_max_pct_of_premium", 0.015)
         ),
@@ -591,7 +609,7 @@ def run_sensitivity(
     max_hold_sessions: int | None = None,
     tmp_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """IV × slippage matrix; scales temporary paper economics only (no global mutation)."""
+    """IV × slippage matrix; scale temporary paper economics only."""
     cell = _as_stage_a_spec(spec, max_hold_sessions=max_hold_sessions)
     base_pe = _base_paper_economics()
     cache_dir = tmp_dir
@@ -603,14 +621,19 @@ def run_sensitivity(
     cells_out: list[dict[str, Any]] = []
     try:
         for iv, mult in product(iv_seeds, slippage_mults):
+            m = float(mult)
             pe = {
-                "commission_usd_per_contract": base_pe["commission_usd_per_contract"],
+                "commission_usd_per_contract": base_pe[
+                    "commission_usd_per_contract"
+                ],
                 "premium_scale": base_pe["premium_scale"],
-                "slippage_usd_per_share": base_pe["slippage_usd_per_share"] * float(mult),
-                "slippage_pct_of_premium": base_pe["slippage_pct_of_premium"]
-                * float(mult),
-                "slippage_max_pct_of_premium": base_pe["slippage_max_pct_of_premium"]
-                * float(mult),
+                "slippage_usd_per_share": base_pe["slippage_usd_per_share"] * m,
+                "slippage_pct_of_premium": (
+                    base_pe["slippage_pct_of_premium"] * m
+                ),
+                "slippage_max_pct_of_premium": (
+                    base_pe["slippage_max_pct_of_premium"] * m
+                ),
             }
             ov = deepcopy(cell.overrides)
             ov["paper_economics"] = pe
@@ -653,7 +676,9 @@ def run_sensitivity(
 
     # IV positive at base slippage (1.0×): count seeds with positive mean
     iv_at_1x = {
-        c["iv_seed"]: c for c in cells_out if abs(float(c["slippage_mult"]) - 1.0) < 1e-9
+        c["iv_seed"]: c
+        for c in cells_out
+        if abs(float(c["slippage_mult"]) - 1.0) < 1e-9
     }
     iv_positive_count = sum(1 for c in iv_at_1x.values() if c["positive"])
 

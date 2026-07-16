@@ -398,7 +398,10 @@ def test_mcpt_positive_edge_can_pass():
     assert out["pass_5pct"] is True
 
 
-def test_uw_mode_fail_open_to_fixture(monkeypatch):
+def test_uw_mode_fail_open_to_fixture(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "xsp_killer.backtest.bars.CACHE_DIR", tmp_path / "empty_uw_cache"
+    )
     monkeypatch.delenv("UNUSUAL_WHALES_API_KEY", raising=False)
     monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "")
     bars, source = load_bars(mode="uw", interval="1d")

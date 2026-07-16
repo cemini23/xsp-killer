@@ -1083,10 +1083,13 @@ def test_strict_uw_loader_raises_insufficient_bars(monkeypatch):
         )
 
 
-def test_load_bars_still_fail_open_without_key(monkeypatch):
+def test_load_bars_still_fail_open_without_key(monkeypatch, tmp_path):
     """Existing load_bars fail-open behavior must remain unchanged."""
     from xsp_killer.backtest.bars import load_bars
 
+    monkeypatch.setattr(
+        "xsp_killer.backtest.bars.CACHE_DIR", tmp_path / "empty_uw_cache"
+    )
     monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "")
     bars, source = load_bars(mode="uw", interval="15m")
     assert source == "fixture_fallback"

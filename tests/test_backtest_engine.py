@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from xsp_killer.backtest.bars import load_bars, load_fixture_daily
+from xsp_killer.backtest.bars import (
+    _read_cache,
+    _write_cache,
+    load_bars,
+    load_fixture_daily,
+)
 from xsp_killer.backtest.engine import run_backtest
 from xsp_killer.backtest.option_model import bs_call, synthesize_call_premium
 from xsp_killer.backtest.report import build_report, mcpt, write_report
@@ -129,6 +134,50 @@ def test_fixture_daily_loads():
     assert len(df) >= 50
     for col in ("open", "high", "low", "close"):
         assert col in df.columns
+    # Naive fixture dates must localize as America/New_York, not UTC.
+    assert str(df.index.tz) == "America/New_York"
+    first = df.index[0]
+    assert first.year == 2024 and first.month == 1 and first.day == 2
+    assert first.hour == 0 and first.minute == 0
+    # Wall clock is ET midnight (not shifted as if UTC→ET).
+    assert first.utcoffset() is not None
+
+
+def test_uw_cache_roundtrip_across_dst_offsets(tmp_path):
+    """Aware ET index with mixed -05:00/-04:00 must survive write→read.
+
+    _write_cache serializes America/New_York timestamps with DST offsets;
+    pandas 3 raises Mixed timezones on naive to_datetime — cache must not
+    return None.
+    """
+    idx = pd.DatetimeIndex(
+        [
+            datetime(2024, 1, 15, 15, 45, tzinfo=ET),  # EST -05:00
+            datetime(2024, 6, 15, 15, 45, tzinfo=ET),  # EDT -04:00
+        ]
+    )
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 110.0],
+            "high": [101.0, 111.0],
+            "low": [99.0, 109.0],
+            "close": [100.5, 110.5],
+            "volume": [1_000_000.0, 2_000_000.0],
+        },
+        index=idx,
+    )
+    path = tmp_path / "uw_hist_SPY_dst.csv"
+    _write_cache(df, path)
+    loaded = _read_cache(path)
+
+    assert loaded is not None, "cache read must not fail-open on mixed DST offsets"
+    assert len(loaded) == 2
+    assert str(loaded.index.tz) == "America/New_York"
+    assert list(loaded["close"]) == [100.5, 110.5]
+    assert list(loaded["open"]) == [100.0, 110.0]
+    # Wall times preserved in ET (not UTC-shifted).
+    assert loaded.index[0].hour == 15 and loaded.index[0].month == 1
+    assert loaded.index[1].hour == 15 and loaded.index[1].month == 6
 
 
 def test_bs_call_atm_positive():

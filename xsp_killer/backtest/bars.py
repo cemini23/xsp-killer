@@ -36,6 +36,22 @@ class InsufficientBarsError(ValueError):
     """Raised when true UW bars exist but fail coverage floors."""
 
 
+def _to_datetime_index_like(values: Any) -> pd.DatetimeIndex | pd.Series:
+    """Parse timestamps; handle mixed DST offsets without masking other errors.
+
+    Naive strings stay wall-clock (utc=False) so fixtures localize as ET.
+    Cache CSVs written with America/New_York may mix -04:00/-05:00 offsets;
+    pandas 3 raises ValueError on mixed timezones — only then use utc=True
+    so aware values normalize before the caller's tz_convert to ET.
+    """
+    try:
+        return pd.to_datetime(values, utc=False)
+    except ValueError as exc:
+        if "Mixed timezones" not in str(exc):
+            raise
+        return pd.to_datetime(values, utc=True)
+
+
 def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFrame:
     """Standardize columns to lower-case OHLCV with DatetimeIndex (tz-aware ET)."""
     out = df.copy()
@@ -58,10 +74,10 @@ def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFr
 
     if not isinstance(out.index, pd.DatetimeIndex):
         if "ts" in out.columns:
-            out["ts"] = pd.to_datetime(out["ts"], utc=False)
+            out["ts"] = _to_datetime_index_like(out["ts"])
             out = out.set_index("ts")
         else:
-            out.index = pd.to_datetime(out.index, utc=False)
+            out.index = _to_datetime_index_like(out.index)
 
     if out.index.tz is None:
         out.index = out.index.tz_localize(

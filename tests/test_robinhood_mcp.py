@@ -39,9 +39,7 @@ def test_default_token_path_uses_localappdata_on_windows(monkeypatch, tmp_path):
     )
 
 
-def test_default_token_path_falls_back_when_localappdata_missing(
-    monkeypatch, tmp_path
-):
+def test_default_token_path_falls_back_when_localappdata_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(robinhood_mcp.sys, "platform", "win32")
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.setattr(robinhood_mcp.Path, "home", lambda: tmp_path)
@@ -108,9 +106,7 @@ def test_adapter_allows_repo_token_with_explicit_development_override(
     monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
     monkeypatch.setenv("XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT", "true")
 
-    adapter = RobinhoodMCPAdapter(
-        RhMcpConfig(token_path=repo / ".local/token.json")
-    )
+    adapter = RobinhoodMCPAdapter(RhMcpConfig(token_path=repo / ".local/token.json"))
 
     assert adapter.config.token_path == repo / ".local/token.json"
 
@@ -208,9 +204,7 @@ def test_adapter_allows_non_onedrive_path_component(monkeypatch, tmp_path, compo
 
 def test_rh_config_and_docs_keep_operational_tokens_outside_repo():
     root = Path(__file__).resolve().parents[1]
-    config = yaml.safe_load(
-        (root / "config/rh_mcp.yaml").read_text(encoding="utf-8")
-    )
+    config = yaml.safe_load((root / "config/rh_mcp.yaml").read_text(encoding="utf-8"))
     docs = "\n".join(
         (root / f"docs/{name}").read_text(encoding="utf-8")
         for name in ("rh_mcp_david.md", "rh_mcp_claudio.md", "rh_mcp_runbook.md")

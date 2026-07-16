@@ -51,9 +51,7 @@ DEFAULT_CONFIG = ROOT / "config" / "rh_mcp.yaml"
 _last_mcp_fetch_wrap: dict[str, Any] | None = None
 MCP_JSONRPC_VERSION = "2.0"
 MCP_ACCEPT = "application/json, text/event-stream"
-REPO_TOKEN_DEVELOPMENT_OVERRIDE = (
-    "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT"
-)
+REPO_TOKEN_DEVELOPMENT_OVERRIDE = "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT"
 
 
 def default_token_path() -> Path:

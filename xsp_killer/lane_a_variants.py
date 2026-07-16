@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import shutil
+import threading
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from xsp_killer.lane_a_monitor import (
     save_state,
     write_paper_pnl_brief,
 )
+from xsp_killer.ops.state import write_json
 from xsp_killer.paper_economics import load_premium_scale
 
 logger = logging.getLogger("xsp_killer.lane_a_variants")
@@ -134,18 +136,44 @@ def variant_state_slice(root: dict[str, Any], variant_id: str) -> dict[str, Any]
     return variants[variant_id]
 
 
-def _variants_state_lock(path: Path):
-    return open_ex_lock(path)
+_variants_lock_state = threading.local()
+
+
+def _variants_state_lock(lock_path: Path):
+    return open_ex_lock(lock_path)
+
+
+def _variants_lock_path(path: Path) -> Path:
+    return path.with_name(path.name + ".lock")
+
+
+def _held_variants_locks() -> set[str]:
+    held = getattr(_variants_lock_state, "held", None)
+    if held is None:
+        held = set()
+        _variants_lock_state.held = held
+    return held
 
 
 def _write_variants_state(root: dict[str, Any], path: Path | None = None) -> Path:
     p = path or DEFAULT_VARIANTS_STATE
-    lock = _variants_state_lock(p)
+    lockfile = _variants_lock_path(p)
+    key = str(lockfile.resolve())
+    held = _held_variants_locks()
+    if key in held:
+        write_json(p, root)
+        return p
+
+    lock = _variants_state_lock(lockfile)
+    held.add(key)
     try:
-        p.write_text(json.dumps(root, indent=2) + "\n", encoding="utf-8")
+        write_json(p, root)
     finally:
-        flock_un(lock)
-        lock.close()
+        held.discard(key)
+        try:
+            flock_un(lock)
+        finally:
+            lock.close()
     return p
 
 
@@ -156,17 +184,26 @@ def _variants_rmw_lock(path: Path | None = None):
     colliding on the same variants_state.json. Non-fatal if flock is
     unavailable (e.g. unsupported filesystem): the cycle proceeds unlocked."""
     p = path or DEFAULT_VARIANTS_STATE
-    lockfile = p.with_name(p.name + ".lock")
+    lockfile = _variants_lock_path(p)
+    key = str(lockfile.resolve())
+    held = _held_variants_locks()
+    if key in held:
+        yield
+        return
+
     fh = None
     try:
         fh = _variants_state_lock(lockfile)
     except Exception as exc:  # noqa: BLE001 — best-effort lock
         logger.warning("variants RMW lock unavailable, proceeding unlocked: %s", exc)
         fh = None
+    if fh is not None:
+        held.add(key)
     try:
         yield
     finally:
         if fh is not None:
+            held.discard(key)
             try:
                 flock_un(fh)
                 fh.close()

@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import xsp_killer.lane_a_entry as lane_a_entry
+import xsp_killer.lane_a_variants as lane_a_variants
 from xsp_killer.lane_a_ta import TaSignal
 from xsp_killer.lane_a_variants import (
     VariantSpec,
@@ -29,6 +32,45 @@ def _write_variants_config(tmp_path, variants: dict[str, dict]) -> None:
         yaml.safe_dump({"variants": variants}, sort_keys=False),
         encoding="utf-8",
     )
+
+
+def test_write_variants_state_uses_reentrant_sidecar_lock(tmp_path, monkeypatch):
+    state = tmp_path / "variants-state.json"
+    acquired = []
+
+    class Lock:
+        def close(self):
+            pass
+
+    def acquire(path):
+        acquired.append(path)
+        return Lock()
+
+    monkeypatch.setattr(lane_a_variants, "_variants_state_lock", acquire)
+    monkeypatch.setattr(lane_a_variants, "flock_un", lambda _lock: None)
+
+    with lane_a_variants._variants_rmw_lock(state):
+        lane_a_variants._write_variants_state({"variants": {}}, state)
+
+    assert acquired == [state.with_name(state.name + ".lock")]
+
+
+def test_write_variants_state_preserves_target_when_replace_fails(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "variants-state.json"
+    original = '{"variants":{"before":{}}}\n'
+    state.write_text(original, encoding="utf-8")
+
+    def fail_replace(_source, _target):
+        raise OSError("simulated interrupted replace")
+
+    monkeypatch.setattr("xsp_killer.ops.state.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated interrupted replace"):
+        lane_a_variants._write_variants_state({"variants": {"after": {}}}, state)
+
+    assert state.read_text(encoding="utf-8") == original
 
 
 def test_load_variant_specs():

@@ -11,7 +11,7 @@ David Windows path: [`rh_mcp_david.md`](rh_mcp_david.md).
 | Item | Path |
 |------|------|
 | Repo | `/opt/xsp-killer` |
-| OAuth token | `/opt/xsp-killer/.local/robinhood_mcp_token.json` (mode `600`) |
+| OAuth token | `${XDG_STATE_HOME:-~/.local/state}/xsp-killer/robinhood_mcp_token.json` (mode `600`) |
 | Kill switch | `/opt/xsp-killer/.local/KILL_SWITCH` or env |
 | Systemd units | `deploy/systemd/xsp-killer-lane-a-*.service` |
 | Timers | entry / intraday / monitor under `deploy/systemd/` |
@@ -22,7 +22,9 @@ David Windows path: [`rh_mcp_david.md`](rh_mcp_david.md).
 
 ```bash
 cd /opt/xsp-killer
-python3 scripts/rh_mcp_sync_claude_token.py
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer"
+python3 scripts/rh_mcp_sync_claude_token.py \
+  --out "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer/robinhood_mcp_token.json"
 ```
 
 2. Set `RH_AGENTIC_ACCOUNT_ID` (Claudio Agentic only) and `XSP_LANE_A_RH_MCP=true` in `.env` / unit Environment.
@@ -41,10 +43,25 @@ PYTHONPATH=. python3 scripts/rh_mcp_health.py
 | Concern | Claudio (this doc) | David |
 |---------|--------------------|--------|
 | Host | Hetzner VPS Linux | Windows desktop |
-| Token | `.local/` on VPS | `%LOCALAPPDATA%\xsp-killer\` |
+| Token | XDG state directory | `%LOCALAPPDATA%\xsp-killer\` |
 | Account pin | Claudio Agentic | David Agentic (separate) |
 | Paper soak | **Primary** (timers) | Optional local / prefer VPS evidence |
 | Live writes | NO-GO until operator GO | NO-GO |
+
+## Migration from the repository
+
+Before health or adapter startup, move any existing token to the service
+user's state directory:
+
+```bash
+install -d -m 700 "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer"
+mv /opt/xsp-killer/.local/robinhood_mcp_token.json \
+  "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer/robinhood_mcp_token.json"
+chmod 600 "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer/robinhood_mcp_token.json"
+```
+
+The service and migration command must run as the same user. Do not set
+`XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT` on the VPS.
 
 ## Install / reinstall units
 

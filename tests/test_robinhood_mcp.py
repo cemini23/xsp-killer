@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
+import xsp_killer.robinhood_mcp as robinhood_mcp
 from xsp_killer.rh_broker import fetch_robinhood_option_positions, rh_read_enabled
 from xsp_killer.robinhood_mcp import (
     RhMcpAccountRejected,
     RhMcpConfig,
     RhMcpError,
     RhMcpLiveExitsDisabled,
+    RhMcpNotReady,
     RobinhoodMCPAdapter,
     _review_grant_key,
     live_exits_enabled,
@@ -20,6 +24,121 @@ from xsp_killer.robinhood_mcp import (
     pinned_account_on_token,
     rh_mcp_enabled,
 )
+
+
+def test_default_token_path_api_exists():
+    assert callable(getattr(robinhood_mcp, "default_token_path", None))
+
+
+def test_default_token_path_uses_localappdata_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(robinhood_mcp.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    assert robinhood_mcp.default_token_path() == (
+        tmp_path / "xsp-killer" / "robinhood_mcp_token.json"
+    )
+
+
+def test_default_token_path_uses_xdg_state_home_on_posix(monkeypatch, tmp_path):
+    monkeypatch.setattr(robinhood_mcp.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    assert robinhood_mcp.default_token_path() == (
+        tmp_path / "xsp-killer" / "robinhood_mcp_token.json"
+    )
+
+
+def test_default_token_path_uses_posix_state_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(robinhood_mcp.sys, "platform", "linux")
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setattr(robinhood_mcp.Path, "home", lambda: tmp_path)
+
+    assert robinhood_mcp.default_token_path() == (
+        tmp_path / ".local/state/xsp-killer/robinhood_mcp_token.json"
+    )
+
+
+def test_token_path_precedence_env_then_config_then_platform(monkeypatch, tmp_path):
+    monkeypatch.setattr(robinhood_mcp, "ROOT", tmp_path / "repo")
+    config_path = tmp_path / "rh_mcp.yaml"
+    config_token = tmp_path / "configured.json"
+    env_token = tmp_path / "environment.json"
+    platform_token = tmp_path / "platform.json"
+    config_path.write_text(f"token_path: {config_token.as_posix()}\n", encoding="utf-8")
+    monkeypatch.setattr(robinhood_mcp, "default_token_path", lambda: platform_token)
+    monkeypatch.setenv("RH_MCP_TOKEN_PATH", str(env_token))
+
+    assert RhMcpConfig.load(config_path).token_path == env_token.resolve()
+    monkeypatch.delenv("RH_MCP_TOKEN_PATH")
+    assert RhMcpConfig.load(config_path).token_path == config_token.resolve()
+    config_path.write_text("token_path: null\n", encoding="utf-8")
+    assert RhMcpConfig.load(config_path).token_path == platform_token.resolve()
+
+
+def test_adapter_rejects_token_path_under_repository(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.delenv(
+        "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT",
+        raising=False,
+    )
+
+    with pytest.raises(RhMcpNotReady, match="development override"):
+        RobinhoodMCPAdapter(RhMcpConfig(token_path=repo / ".local/token.json"))
+
+
+def test_adapter_allows_repo_token_with_explicit_development_override(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.setenv("XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT", "true")
+
+    adapter = RobinhoodMCPAdapter(
+        RhMcpConfig(token_path=repo / ".local/token.json")
+    )
+
+    assert adapter.config.token_path == repo / ".local/token.json"
+
+
+def test_adapter_rejects_symlink_resolving_under_repository(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    try:
+        outside.symlink_to(repo, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable on this platform")
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.delenv(
+        "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT",
+        raising=False,
+    )
+
+    with pytest.raises(RhMcpNotReady, match="development override"):
+        RobinhoodMCPAdapter(RhMcpConfig(token_path=outside / "token.json"))
+
+
+def test_rh_config_and_docs_keep_operational_tokens_outside_repo():
+    root = Path(__file__).resolve().parents[1]
+    config = yaml.safe_load(
+        (root / "config/rh_mcp.yaml").read_text(encoding="utf-8")
+    )
+    docs = "\n".join(
+        (root / f"docs/{name}").read_text(encoding="utf-8")
+        for name in ("rh_mcp_david.md", "rh_mcp_claudio.md", "rh_mcp_runbook.md")
+    )
+
+    assert config["token_path"] is None
+    assert "OAuth token | `/opt/xsp-killer/.local/" not in docs
+    assert "Export token to `/opt/xsp-killer/.local/" not in docs
+    assert "%LOCALAPPDATA%\\xsp-killer\\robinhood_mcp_token.json" in docs
+    assert "${XDG_STATE_HOME:-~/.local/state}/xsp-killer/" in docs
+    assert "Migration" in docs
+    assert "XSP_LANE_A_LIVE_ENTRIES=false" in docs
+    assert "XSP_LANE_A_LIVE_EXITS=false" in docs
 
 
 def test_rh_b_poll_separate_from_lane_a(monkeypatch):

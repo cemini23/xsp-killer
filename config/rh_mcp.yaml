@@ -1,10 +1,10 @@
 # Robinhood Agentic Trading MCP — headless adapter config (Phase 0+).
-# OAuth token: .local/robinhood_mcp_token.json (never commit).
+# OAuth token: platform state directory by default (never commit).
 # See docs/rh_mcp_runbook.md and briefs/2026-06-29_xsp-robinhood-agentic-mcp-connection-cemini-prod.md
 
 agentic_account_id: ""  # REQUIRED for writes — from get_accounts (Agentic account)
 mcp_url: "https://agent.robinhood.com/mcp/trading"
-token_path: ".local/robinhood_mcp_token.json"
+token_path: null  # %LOCALAPPDATA% on Windows; XDG state directory on POSIX
 
 allowed_chain_symbols:
   - XSP

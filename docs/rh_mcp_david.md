@@ -24,7 +24,8 @@ Claudio VPS path: [`rh_mcp_claudio.md`](rh_mcp_claudio.md).
 3. Export token JSON (`access_token`) to `%LOCALAPPDATA%\xsp-killer\robinhood_mcp_token.json` (restrict ACLs).
 4. Set in local env:
    - `RH_AGENTIC_ACCOUNT_ID` = **David’s** Agentic account number from `get_accounts`
-   - token path override if config still points at `.local/` (prefer absolute LOCALAPPDATA path)
+   - no token-path setting is needed for the platform default; an explicit
+     `RH_MCP_TOKEN_PATH` still overrides config when migration requires it
    - `XSP_LANE_A_RH_MCP=true`
 5. **Keep** `XSP_LANE_A_LIVE_ENTRIES=false` and `XSP_LANE_A_LIVE_EXITS=false`.
 6. Health:
@@ -36,6 +37,20 @@ python scripts\rh_mcp_health.py
 ```
 
 Expect HIGH confidence and pin ∈ accounts for **this** token. Stop after green health — **no placement**.
+
+## Migration from a repo-local token
+
+Move the existing token out of the clone before running health:
+
+```powershell
+$dest = Join-Path $env:LOCALAPPDATA "xsp-killer\robinhood_mcp_token.json"
+New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+Move-Item "path\to\xsp-killer\.local\robinhood_mcp_token.json" $dest
+```
+
+Do not use `XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT` operationally. It is
+an explicit local-development escape hatch, and the adapter otherwise refuses
+token paths that resolve inside the repository or a OneDrive workspace.
 
 ## Runtime note
 

@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -50,6 +51,50 @@ DEFAULT_CONFIG = ROOT / "config" / "rh_mcp.yaml"
 _last_mcp_fetch_wrap: dict[str, Any] | None = None
 MCP_JSONRPC_VERSION = "2.0"
 MCP_ACCEPT = "application/json, text/event-stream"
+REPO_TOKEN_DEVELOPMENT_OVERRIDE = (
+    "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT"
+)
+
+
+def default_token_path() -> Path:
+    """Return the platform-local, non-repository OAuth token location."""
+    if sys.platform == "win32":
+        return Path(os.environ["LOCALAPPDATA"]) / "xsp-killer" / (
+            "robinhood_mcp_token.json"
+        )
+    state_home = os.getenv("XDG_STATE_HOME")
+    base = Path(state_home).expanduser() if state_home else Path.home() / ".local/state"
+    return base / "xsp-killer" / "robinhood_mcp_token.json"
+
+
+def _development_repo_token_allowed() -> bool:
+    return os.getenv(REPO_TOKEN_DEVELOPMENT_OVERRIDE, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _validate_token_path(token_path: Path) -> Path:
+    resolved = token_path.expanduser().resolve()
+    protected_roots = {ROOT.resolve()}
+    for env_name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        raw = os.getenv(env_name, "").strip()
+        if raw:
+            protected_roots.add(Path(raw).expanduser().resolve())
+    unsafe = any(
+        resolved == protected or resolved.is_relative_to(protected)
+        for protected in protected_roots
+    )
+    if unsafe and not _development_repo_token_allowed():
+        raise RhMcpNotReady(
+            "rh_mcp: operational token path resolves inside the repository or "
+            "a OneDrive workspace; move it to the platform state directory or "
+            "set the explicit development override "
+            f"{REPO_TOKEN_DEVELOPMENT_OVERRIDE}=true for development only"
+        )
+    return resolved
 
 
 def parse_mcp_http_response(raw: str) -> dict[str, Any]:
@@ -174,9 +219,7 @@ def _to_float(value: Any) -> float | None:
 class RhMcpConfig:
     agentic_account_id: str = ""
     mcp_url: str = "https://agent.robinhood.com/mcp/trading"
-    token_path: Path = field(
-        default_factory=lambda: ROOT / ".local/robinhood_mcp_token.json"
-    )
+    token_path: Path = field(default_factory=default_token_path)
     allowed_chain_symbols: tuple[str, ...] = ("XSP", "SPX")
     live_exits: bool = False
     live_entries: bool = False
@@ -192,7 +235,17 @@ class RhMcpConfig:
         data: dict[str, Any] = {}
         if cfg_path.is_file():
             data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-        token_raw = str(data.get("token_path") or ".local/robinhood_mcp_token.json")
+        env_token = os.getenv("RH_MCP_TOKEN_PATH", "").strip()
+        configured_token = data.get("token_path")
+        token_raw = env_token or (
+            str(configured_token).strip() if configured_token else ""
+        )
+        if token_raw:
+            candidate = Path(token_raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = ROOT / candidate
+        else:
+            candidate = default_token_path()
         audit_raw = str(data.get("audit_log") or "logs/rh_mcp_audit.jsonl")
         symbols = data.get("allowed_chain_symbols") or ["XSP", "SPX"]
         account = os.getenv("RH_AGENTIC_ACCOUNT_ID", "").strip() or str(
@@ -201,9 +254,7 @@ class RhMcpConfig:
         return cls(
             agentic_account_id=account,
             mcp_url=str(data.get("mcp_url") or cls.mcp_url),
-            token_path=(ROOT / token_raw).resolve()
-            if not Path(token_raw).is_absolute()
-            else Path(token_raw),
+            token_path=_validate_token_path(candidate),
             allowed_chain_symbols=tuple(str(s).upper() for s in symbols),
             live_exits=bool(data.get("live_exits", False)),
             live_entries=bool(data.get("live_entries", False)),
@@ -463,6 +514,7 @@ class RobinhoodMCPAdapter:
         http_post: Callable[..., Any] | None = None,
     ) -> None:
         self.config = config or RhMcpConfig.load()
+        self.config.token_path = _validate_token_path(self.config.token_path)
         self._http_post = http_post or self._default_http_post
         self._last_review: dict[str, Any] | None = None
         self._active_grant: dict[str, Any] | None = None

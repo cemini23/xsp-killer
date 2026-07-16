@@ -8,7 +8,7 @@ Canonical plan: `briefs/2026-06-29_xsp-robinhood-agentic-mcp-connection-cemini-p
 
 | Who | Doc | Host | Token path |
 |-----|-----|------|------------|
-| **Claudio** (cemini-prod) | [`rh_mcp_claudio.md`](rh_mcp_claudio.md) | Linux VPS `/opt/xsp-killer` | `/opt/xsp-killer/.local/robinhood_mcp_token.json` |
+| **Claudio** (cemini-prod) | [`rh_mcp_claudio.md`](rh_mcp_claudio.md) | Linux VPS `/opt/xsp-killer` | `${XDG_STATE_HOME:-~/.local/state}/xsp-killer/robinhood_mcp_token.json` |
 | **David** (operator RH) | [`rh_mcp_david.md`](rh_mcp_david.md) | Windows | `%LOCALAPPDATA%\xsp-killer\robinhood_mcp_token.json` (**not** OneDrive) |
 
 **Never** share Agentic account ids or OAuth tokens across operators. Each person authenticates **their** Robinhood Agentic account.
@@ -28,7 +28,7 @@ Reads require **either** `XSP_LANE_A_RH_MCP=true` (preferred) **or** `XSP_LANE_A
 
 1. Complete desktop OAuth (Robinhood Agentic Trading → MCP URL in Cursor).
 2. Fill `config/rh_mcp_audit.md` — confirm options tools exist on your account.
-3. Export token to `/opt/xsp-killer/.local/robinhood_mcp_token.json` (mode `600`, root-only).
+3. Export token to `${XDG_STATE_HOME:-~/.local/state}/xsp-killer/robinhood_mcp_token.json` (mode `600`, service-user only).
 4. Set `RH_AGENTIC_ACCOUNT_ID` in `.env` (Agentic account only).
 5. Enable reads: `XSP_LANE_A_RH_MCP=true` (keep `XSP_LANE_A_RH_POLL=false`).
 6. Health check:
@@ -61,7 +61,9 @@ claude
 
 ```bash
 cd /opt/xsp-killer
-python3 scripts/rh_mcp_sync_claude_token.py
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer"
+python3 scripts/rh_mcp_sync_claude_token.py \
+  --out "${XDG_STATE_HOME:-$HOME/.local/state}/xsp-killer/robinhood_mcp_token.json"
 ```
 
 4. Set Agentic account id + enable MCP reads in `.env`:
@@ -73,7 +75,19 @@ python3 scripts/rh_mcp_sync_claude_token.py
 
 5. Re-run `scripts/rh_mcp_health.py` — expect MCP positions read (or empty list).
 
-**Cursor desktop alternative:** Settings → Tools & MCPs → add `https://agent.robinhood.com/mcp/trading`, authenticate, then copy `access_token` into `.local/robinhood_mcp_token.json` manually (same JSON shape as sync script output).
+**Cursor desktop alternative:** Settings → Tools & MCPs → add `https://agent.robinhood.com/mcp/trading`, authenticate, then export the token to the platform default above (same JSON shape as sync script output).
+
+### Token migration and overrides
+
+- Windows: move the token to
+  `%LOCALAPPDATA%\xsp-killer\robinhood_mcp_token.json`.
+- POSIX: move it to
+  `${XDG_STATE_HOME:-~/.local/state}/xsp-killer/robinhood_mcp_token.json`.
+- `RH_MCP_TOKEN_PATH` overrides YAML; a non-empty YAML `token_path` overrides
+  the platform default.
+- The adapter and health startup refuse paths resolving inside the repository
+  or a OneDrive workspace. `XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT=true`
+  is only for explicit local development, never operations.
 
 7. Compare MCP vs legacy poll (optional parallel week):
 
@@ -122,6 +136,6 @@ When `XSP_LANE_A_LIVE_ENTRIES=true` and the kill switch is clear, the entry cron
 
 ## Do not
 
-- Commit `.local/robinhood_mcp_token.json` or paste passwords in chat
+- Store an OAuth token anywhere inside a repository/synchronized workspace or paste it in chat
 - Enable live exits before MCP tool audit + paper soak gates pass
 - Route orders to non-Agentic accounts (adapter hard-rejects)

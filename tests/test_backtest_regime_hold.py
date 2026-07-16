@@ -701,6 +701,178 @@ def test_behavioral_clones_do_not_form_stability_or_consume_finalist_quota():
     ]
 
 
+def test_test_exit_perturbation_cannot_change_selection_behavior_dedupe():
+    from types import SimpleNamespace
+
+    rows_a = [{"variant_id": "a"}, {"variant_id": "b"}]
+    rows_b = deepcopy(rows_a)
+    selection = {
+        variant: [
+            SimpleNamespace(
+                entry_ts="2026-01-02",
+                exit_ts="2026-01-03",
+                exit_reason="take_profit",
+            )
+        ]
+        for variant in ("a", "b")
+    }
+    full_before = {
+        **selection,
+        "b": selection["b"]
+        + [
+            SimpleNamespace(
+                entry_ts="2026-09-01",
+                exit_ts="2026-09-02",
+                exit_reason="test_exit",
+            )
+        ],
+    }
+    full_after = {
+        **selection,
+        "b": selection["b"]
+        + [
+            SimpleNamespace(
+                entry_ts="2026-09-01",
+                exit_ts="2026-09-09",
+                exit_reason="perturbed_test_exit",
+            )
+        ],
+    }
+    annotate_behavior_duplicates(rows_a, selection, full_before)
+    annotate_behavior_duplicates(rows_b, selection, full_after)
+    assert rows_a[1]["behavior_duplicate_of"] == "a"
+    assert rows_b[1]["behavior_duplicate_of"] == "a"
+    assert rows_a[1]["selection_behavior_signature"] == rows_b[1][
+        "selection_behavior_signature"
+    ]
+    assert rows_a[1]["full_behavior_signature"] != rows_b[1][
+        "full_behavior_signature"
+    ]
+
+
+def test_train_behavior_clones_do_not_consume_refinement_seed_quota():
+    rows = [
+        {
+            "variant_id": variant,
+            "n_train": 10,
+            "train_mean_net_pnl_pct": mean,
+            "behavior_duplicate_of": duplicate,
+        }
+        for variant, mean, duplicate in [
+            ("a", 0.03, None),
+            ("a_clone", 0.02, "a"),
+            ("b", 0.01, None),
+        ]
+    ]
+    from xsp_killer.backtest.regime_hold import select_train_refinement_seeds
+
+    selected = select_train_refinement_seeds(rows, top_k=2, min_trades=8)
+    assert [row["variant_id"] for row in selected] == ["a", "b"]
+
+
+def test_train_behavior_canonical_is_independent_of_validation_order():
+    from types import SimpleNamespace
+
+    rows = [
+        {
+            "variant_id": "lower_train",
+            "train_mean_net_pnl_pct": 0.01,
+            "validation_mean_net_pnl_pct": 0.99,
+        },
+        {
+            "variant_id": "higher_train",
+            "train_mean_net_pnl_pct": 0.02,
+            "validation_mean_net_pnl_pct": -0.99,
+        },
+    ]
+    shared = [
+        SimpleNamespace(entry_ts="2026-01-02", exit_ts="2026-01-03", exit_reason="tp")
+    ]
+    annotate_behavior_duplicates(
+        rows,
+        {"lower_train": shared, "higher_train": list(shared)},
+        canonical_metric="train_mean_net_pnl_pct",
+    )
+    by_id = {row["variant_id"]: row for row in rows}
+    assert by_id["higher_train"]["behavior_duplicate_of"] is None
+    assert by_id["lower_train"]["behavior_duplicate_of"] == "higher_train"
+
+
+def test_edge_candidate_checks_ranked_finalists_until_one_passes(monkeypatch):
+    from scripts import optimize_regime_hold as cli
+
+    finalists = [{"variant_id": "first"}, {"variant_id": "second"}]
+    calls: list[str] = []
+
+    def fake_edge(row, sensitivity, intraday, **kwargs):
+        calls.append(row["variant_id"])
+        passed = row["variant_id"] == "second"
+        return passed, "passed" if passed else "failed"
+
+    monkeypatch.setattr(cli, "edge_confirmed", fake_edge)
+    row, ok, reason = cli._select_edge_candidate(
+        finalists,
+        sensitivity_by_id={
+            "first": {"variant_id": "first"},
+            "second": {"variant_id": "second"},
+        },
+        intraday_by_id={"first": {}, "second": {}},
+        run_b=True,
+        min_trades=8,
+        min_intraday_trades=20,
+    )
+    assert (row["variant_id"], ok, reason) == ("second", True, "passed")
+    assert calls == ["first", "second"]
+
+
+def test_edge_candidate_missing_sensitivity_fails_explicitly(monkeypatch):
+    from scripts import optimize_regime_hold as cli
+
+    monkeypatch.setattr(
+        cli,
+        "edge_confirmed",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("gate must not run without matching sensitivity")
+        ),
+    )
+    row, ok, reason = cli._select_edge_candidate(
+        [{"variant_id": "best"}],
+        sensitivity_by_id={},
+        intraday_by_id={"best": {}},
+        run_b=True,
+        min_trades=8,
+        min_intraday_trades=20,
+    )
+    assert (row["variant_id"], ok, reason) == (
+        "best",
+        False,
+        "sensitivity_missing",
+    )
+
+
+def test_edge_candidate_none_passes_returns_best_row_reason(monkeypatch):
+    from scripts import optimize_regime_hold as cli
+
+    monkeypatch.setattr(
+        cli,
+        "edge_confirmed",
+        lambda row, *args, **kwargs: (False, f"{row['variant_id']}_failed"),
+    )
+    finalists = [{"variant_id": "best"}, {"variant_id": "next"}]
+    row, ok, reason = cli._select_edge_candidate(
+        finalists,
+        sensitivity_by_id={
+            "best": {"variant_id": "best"},
+            "next": {"variant_id": "next"},
+        },
+        intraday_by_id={"best": {}, "next": {}},
+        run_b=True,
+        min_trades=8,
+        min_intraday_trades=20,
+    )
+    assert (row["variant_id"], ok, reason) == ("best", False, "best_failed")
+
+
 def test_distinct_adjacent_positive_behaviors_can_form_stability():
     rows = [
         {

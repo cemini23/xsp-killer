@@ -490,8 +490,11 @@ def select_train_refinement_seeds(
     min_trades: int,
 ) -> list[dict[str, Any]]:
     """Select coarse refinement seeds using train data only."""
-    qualified = [r for r in rows if int(r.get("n_train") or 0) >= int(min_trades)]
-    pool = qualified if qualified else list(rows)
+    unique = [r for r in rows if not r.get("behavior_duplicate_of")]
+    qualified = [
+        r for r in unique if int(r.get("n_train") or 0) >= int(min_trades)
+    ]
+    pool = qualified if qualified else unique
     ranked = sorted(
         pool,
         key=lambda r: (
@@ -531,7 +534,9 @@ def run_stage_a(
     results_by_id: dict[str, BacktestResult] = {}
     cell_by_id: dict[str, StageASpec] = {}
     overrides_by_id: dict[str, dict[str, Any]] = {}
-    split_cuts: dict[str, str] = {}
+    split_cuts: dict[str, Any] = {}
+    train_trades_by_id: dict[str, list[TradeRow]] = {}
+    selection_trades_by_id: dict[str, list[TradeRow]] = {}
 
     def _run_cells(batch: list[StageASpec]) -> None:
         nonlocal split_cuts
@@ -566,9 +571,11 @@ def run_stage_a(
         for vid in ids if ids is not None else list(results_by_id.keys()):
             res = results_by_id[vid]
             cell = cell_by_id[vid]
-            train, validation, test, _ = partition_trades_three_way(
+            train, validation, test, cuts = partition_trades_three_way(
                 res.trades, bars, train_frac=split_frac
             )
+            train_trades_by_id[vid] = train
+            selection_trades_by_id[vid] = train + validation
             row = summarize_three_way_split(
                 train,
                 validation,
@@ -576,6 +583,7 @@ def run_stage_a(
                 variant_id=vid,
                 n_entries_blocked=res.n_entries_blocked,
             )
+            row["n_purged_boundary"] = int(cuts.get("n_purged") or 0)
             row["validation_observations"] = [
                 (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
                 for t in validation
@@ -598,6 +606,11 @@ def run_stage_a(
         rows = _rows_from_results()
 
         if coarse_to_fine and rows:
+            annotate_behavior_duplicates(
+                rows,
+                train_trades_by_id,
+                canonical_metric="train_mean_net_pnl_pct",
+            )
             seed_rows = select_train_refinement_seeds(
                 rows, top_k=top_k, min_trades=min_trades
             )
@@ -630,7 +643,9 @@ def run_stage_a(
 
         annotate_behavior_duplicates(
             rows,
+            selection_trades_by_id,
             {variant_id: result.trades for variant_id, result in results_by_id.items()},
+            canonical_metric="validation_mean_net_pnl_pct",
         )
         rows.sort(key=lambda r: _rank_key(r, min_trades=min_trades), reverse=True)
 
@@ -991,18 +1006,42 @@ def _behavior_signature(trades: list[Any]) -> str:
 
 def annotate_behavior_duplicates(
     rows: list[dict[str, Any]],
-    trades_by_id: dict[str, list[Any]],
+    selection_trades_by_id: dict[str, list[Any]],
+    full_trades_by_id: dict[str, list[Any]] | None = None,
+    *,
+    canonical_metric: str | None = None,
 ) -> None:
-    """Annotate behavior-equivalent rows, preserving the first as canonical."""
-    canonical_by_signature: dict[str, str] = {}
+    """Deduplicate on selection-period behavior; report full behavior separately."""
     for row in rows:
         variant_id = str(row.get("variant_id") or "")
-        signature = _behavior_signature(trades_by_id.get(variant_id, []))
+        signature = _behavior_signature(selection_trades_by_id.get(variant_id, []))
+        row["selection_behavior_signature"] = signature
         row["behavior_signature"] = signature
-        canonical = canonical_by_signature.get(signature)
-        row["behavior_duplicate_of"] = canonical
-        if canonical is None:
-            canonical_by_signature[signature] = variant_id
+        if full_trades_by_id is not None:
+            row["full_behavior_signature"] = _behavior_signature(
+                full_trades_by_id.get(variant_id, [])
+            )
+
+    canonical_by_signature: dict[str, str] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["selection_behavior_signature"]), []).append(row)
+    for signature, members in grouped.items():
+        canonical = (
+            max(
+                members,
+                key=lambda row: float(row.get(canonical_metric) or 0.0),
+            )
+            if canonical_metric is not None
+            else members[0]
+        )
+        canonical_by_signature[signature] = str(canonical.get("variant_id") or "")
+    for row in rows:
+        canonical_id = canonical_by_signature[str(row["selection_behavior_signature"])]
+        variant_id = str(row.get("variant_id") or "")
+        row["behavior_duplicate_of"] = (
+            None if variant_id == canonical_id else canonical_id
+        )
 
 
 def stable_windows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

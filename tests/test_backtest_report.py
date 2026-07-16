@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from xsp_killer.backtest import report
 
 
@@ -37,3 +39,29 @@ def test_familywise_max_stat_draws_one_shared_sign_per_session(monkeypatch):
     }
     report.familywise_max_stat_mcpt(family, n_perm=11, seed=1)
     assert calls == [("d1", "d2", "d3")] * 11
+
+
+@pytest.mark.parametrize("n_perm", [0, -1])
+def test_familywise_max_stat_rejects_nonpositive_permutations(n_perm):
+    with pytest.raises(ValueError, match="n_perm"):
+        report.familywise_max_stat_mcpt({"a": [("d1", 0.1)]}, n_perm=n_perm)
+
+
+def test_familywise_max_stat_skips_invalid_observations_deterministically():
+    family = {
+        "a": [
+            ("d1", 0.1),
+            ("d2", None),
+            (None, 0.2),
+            ("d3", float("nan")),
+            ("malformed",),
+        ],
+        "b": None,
+        "c": 7,
+    }
+    first = report.familywise_max_stat_mcpt(family, n_perm=20, seed=3)
+    second = report.familywise_max_stat_mcpt(family, n_perm=20, seed=3)
+    assert first == second
+    assert first["a"]["n_trades"] == 1
+    assert first["b"]["n_trades"] == 0
+    assert first["c"]["n_trades"] == 0

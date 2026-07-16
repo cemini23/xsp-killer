@@ -251,6 +251,42 @@ def _select_finalists(
     return pool[: min(int(top_k), len(pool))]
 
 
+def _select_edge_candidate(
+    finalists: list[dict[str, Any]],
+    *,
+    sensitivity_by_id: dict[str, dict[str, Any]],
+    intraday_by_id: dict[str, dict[str, Any]],
+    run_b: bool,
+    min_trades: int,
+    min_intraday_trades: int,
+) -> tuple[dict[str, Any] | None, bool, str]:
+    """Return the first rank-ordered finalist passing every edge gate."""
+    if not finalists:
+        return None, False, "no_candidates"
+
+    best_row = finalists[0]
+    best_reason = "sensitivity_missing"
+    for index, row in enumerate(finalists):
+        variant_id = str(row.get("variant_id") or "")
+        sensitivity = sensitivity_by_id.get(variant_id)
+        if sensitivity is None:
+            reason = "sensitivity_missing"
+            ok = False
+        else:
+            ok, reason = edge_confirmed(
+                row,
+                sensitivity,
+                intraday_by_id.get(variant_id) if run_b else None,
+                min_trades=min_trades,
+                min_intraday_trades=min_intraday_trades,
+            )
+        if index == 0:
+            best_reason = reason
+        if ok:
+            return row, True, reason
+    return best_row, False, best_reason
+
+
 def _stage_a_spec_from_row(row: dict[str, Any]) -> StageASpec:
     """Rebuild a StageASpec from a ranking row (no live YAML keys)."""
     dte = int(row.get("dte_target") or 28)
@@ -828,31 +864,20 @@ def main(argv: list[str] | None = None) -> int:
         if sensitivity_list and "sensitivity" not in payload:
             payload["sensitivity"] = sensitivity_list
 
-    # Recommendation / edge gate on best finalist
-    rec_row = finalists[0] if finalists else (ranking[0] if ranking else None)
-    sens_for_rec: dict[str, Any] = {}
-    if rec_row and sensitivity_list:
-        vid = str(rec_row.get("variant_id") or "")
-        sens_for_rec = next(
-            (s for s in sensitivity_list if s.get("variant_id") == vid),
-            sensitivity_list[0],
-        )
-    intra_for_rec = None
-    if rec_row:
-        intra_for_rec = intraday_by_id.get(str(rec_row.get("variant_id") or ""))
-
-    edge_ok = False
-    edge_reason = "no_candidates"
-    if rec_row is not None:
-        edge_ok, edge_reason = edge_confirmed(
-            rec_row,
-            sens_for_rec or {},
-            intra_for_rec if run_b else None,
-            min_trades=int(args.min_trades),
-            min_intraday_trades=int(args.min_intraday_trades),
-        )
-        # When Stage B not run, edge_confirmed reports intraday_validation_missing
-        # which is correct (cannot confirm).
+    # Evaluate rank-ordered finalists; never borrow another variant's sensitivity.
+    sensitivity_by_id = {
+        str(sensitivity.get("variant_id") or ""): sensitivity
+        for sensitivity in sensitivity_list
+    }
+    candidate_rows = finalists if finalists else ranking[:1]
+    rec_row, edge_ok, edge_reason = _select_edge_candidate(
+        candidate_rows,
+        sensitivity_by_id=sensitivity_by_id,
+        intraday_by_id=intraday_by_id,
+        run_b=run_b,
+        min_trades=int(args.min_trades),
+        min_intraday_trades=int(args.min_intraday_trades),
+    )
 
     pricing_fidelity = str(payload.get("pricing_fidelity") or "modeled_bs_lite")
     can_promote = promotion_eligible(
@@ -861,10 +886,11 @@ def main(argv: list[str] | None = None) -> int:
         paper_confirmation=payload.get("paper_confirmation") is True,
     )
     status = "RESEARCH-SURVIVOR (inactive)" if edge_ok else "RESEARCH ONLY"
+    rec_variant_id = str(rec_row.get("variant_id") or "") if rec_row else ""
     for row in ranking:
         row["decision_status"] = (
             "RESEARCH-SURVIVOR (inactive)"
-            if row is rec_row and edge_ok
+            if str(row.get("variant_id") or "") == rec_variant_id and edge_ok
             else "RESEARCH ONLY"
         )
     yaml_snip = ""

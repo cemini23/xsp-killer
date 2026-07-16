@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import operator
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,13 +31,37 @@ def familywise_max_stat_mcpt(
     """Shared-session sign-flip max-statistic test across a variant family."""
     import numpy as np
 
+    if isinstance(n_perm, bool):
+        raise ValueError("n_perm must be a positive integer")
+    try:
+        permutation_count = operator.index(n_perm)
+    except TypeError as exc:
+        raise ValueError("n_perm must be a positive integer") from exc
+    if permutation_count <= 0:
+        raise ValueError("n_perm must be a positive integer")
+
     clean: dict[str, list[tuple[str, float]]] = {}
     for variant_id, observations in variants.items():
-        clean[variant_id] = [
-            (str(session), float(pnl))
-            for session, pnl in observations
-            if np.isfinite(float(pnl))
-        ]
+        clean_observations: list[tuple[str, float]] = []
+        try:
+            observation_iter = (
+                iter(observations) if observations is not None else iter(())
+            )
+        except TypeError:
+            observation_iter = iter(())
+        for observation in observation_iter:
+            if not isinstance(observation, (tuple, list)) or len(observation) != 2:
+                continue
+            session, pnl = observation
+            if session is None or not str(session):
+                continue
+            try:
+                pnl_value = float(pnl)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(pnl_value):
+                clean_observations.append((str(session), pnl_value))
+        clean[variant_id] = clean_observations
     session_keys = sorted(
         {session for observations in clean.values() for session, _ in observations}
     )
@@ -48,7 +73,7 @@ def familywise_max_stat_mcpt(
     }
     exceedances = {variant_id: 0 for variant_id in clean}
     rng = np.random.default_rng(seed)
-    for _ in range(int(n_perm)):
+    for _ in range(permutation_count):
         signs = _draw_session_signs(session_keys, rng)
         permuted = {
             variant_id: (
@@ -68,12 +93,12 @@ def familywise_max_stat_mcpt(
             "n_trades": len(clean[variant_id]),
             "observed_mean_pct": obs,
             "familywise_p_value": (exceedances[variant_id] + 1)
-            / (int(n_perm) + 1),
+            / (permutation_count + 1),
             "familywise_pass_5pct": bool(
-                (exceedances[variant_id] + 1) / (int(n_perm) + 1) < 0.05
+                (exceedances[variant_id] + 1) / (permutation_count + 1) < 0.05
                 and obs > 0
             ),
-            "n_perm": int(n_perm),
+            "n_perm": permutation_count,
             "n_family_variants": len(clean),
             "shared_session_signs": True,
         }

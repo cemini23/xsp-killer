@@ -267,15 +267,19 @@ def partition_trades_three_way(
     list[TradeRow],
     list[TradeRow],
     list[TradeRow],
-    dict[str, str],
+    dict[str, Any],
 ]:
-    """Assign entries to contiguous train, validation, and untouched test periods."""
+    """Assign trades wholly contained in one contiguous temporal split."""
     train_f = float(train_frac)
     validation_f = float(validation_frac)
     if train_f <= 0 or validation_f <= 0 or train_f + validation_f >= 1:
         raise ValueError("train_frac and validation_frac must be positive and sum < 1")
     if bars is None or len(bars) < 3:
-        return [], [], list(trades), {"train_end": "", "validation_end": ""}
+        return [], [], [], {
+            "train_end": "",
+            "validation_end": "",
+            "n_purged": len(trades),
+        }
 
     train_i = max(1, min(int(len(bars) * train_f), len(bars) - 2))
     validation_i = max(
@@ -292,23 +296,32 @@ def partition_trades_three_way(
     train: list[TradeRow] = []
     validation: list[TradeRow] = []
     test: list[TradeRow] = []
+    n_purged = 0
     for trade in trades:
         try:
             entry_ts = pd.Timestamp(trade.entry_ts)
+            exit_ts = pd.Timestamp(trade.exit_ts)
             if entry_ts.tzinfo is None:
                 entry_ts = entry_ts.tz_localize("America/New_York")
+            if exit_ts.tzinfo is None:
+                exit_ts = exit_ts.tz_localize("America/New_York")
         except (TypeError, ValueError):
-            test.append(trade)
+            n_purged += 1
             continue
-        if entry_ts <= train_end:
+        if exit_ts < entry_ts:
+            n_purged += 1
+        elif entry_ts <= train_end and exit_ts <= train_end:
             train.append(trade)
-        elif entry_ts <= validation_end:
+        elif entry_ts > train_end and exit_ts <= validation_end:
             validation.append(trade)
-        else:
+        elif entry_ts > validation_end:
             test.append(trade)
+        else:
+            n_purged += 1
     return train, validation, test, {
         "train_end": train_end.isoformat(),
         "validation_end": validation_end.isoformat(),
+        "n_purged": n_purged,
     }
 
 
@@ -468,7 +481,7 @@ def run_optimize(
 
     results_by_id: dict[str, BacktestResult] = {}
     overrides_by_id: dict[str, dict[str, Any]] = {}
-    split_cuts: dict[str, str] = {}
+    split_cuts: dict[str, Any] = {}
 
     def _run_specs(batch: list[VariantSpec]) -> None:
         nonlocal split_cuts
@@ -499,7 +512,7 @@ def run_optimize(
 
         rows: list[dict[str, Any]] = []
         for vid, res in results_by_id.items():
-            train, validation, test, _ = partition_trades_three_way(
+            train, validation, test, cuts = partition_trades_three_way(
                 res.trades, bars, train_frac=split_frac
             )
             row = summarize_three_way_split(
@@ -514,6 +527,7 @@ def run_optimize(
                 (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
                 for t in validation
             ]
+            row["n_purged_boundary"] = int(cuts.get("n_purged") or 0)
             rows.append(row)
 
         # Coarse seeds are selected from train only.
@@ -548,7 +562,7 @@ def run_optimize(
                 _run_specs(neighbors)
                 for spec in neighbors:
                     res = results_by_id[spec.variant_id]
-                    train, validation, test, _ = partition_trades_three_way(
+                    train, validation, test, cuts = partition_trades_three_way(
                         res.trades, bars, train_frac=split_frac
                     )
                     row = summarize_three_way_split(
@@ -565,6 +579,7 @@ def run_optimize(
                         (str(pd.Timestamp(t.entry_ts).date()), t.net_pnl_pct)
                         for t in validation
                     ]
+                    row["n_purged_boundary"] = int(cuts.get("n_purged") or 0)
                     rows.append(row)
 
         # Final selection ranks validation only; test metrics remain reporting/gates.

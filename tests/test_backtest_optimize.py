@@ -137,6 +137,82 @@ def test_partition_trades_three_way_is_contiguous_and_nonoverlapping():
     )
 
 
+def test_partition_three_way_purges_boundary_crossing_trade():
+    bars = load_fixture_daily()
+    train_end_i = int(len(bars) * 0.6) - 1
+    crossing = TradeRow(
+        variant_id="crossing",
+        entry_ts=str(bars.index[train_end_i]),
+        exit_ts=str(bars.index[train_end_i + 1]),
+        dte_at_entry=28,
+        strike=400.0,
+        exit_reason="take_profit",
+        net_pnl_pct=99.0,
+        pnl_usd=0.0,
+        entry_mid=5.0,
+        exit_mid=5.0,
+        entry_fill=5.0,
+        bars_held=1,
+    )
+    train, validation, test, cuts = partition_trades_three_way([crossing], bars)
+    assert train == validation == test == []
+    assert cuts["n_purged"] == 1
+
+
+def test_boundary_trade_pnl_perturbation_cannot_change_refinement_seeds():
+    from xsp_killer.backtest.optimize import summarize_three_way_split
+    from xsp_killer.backtest.regime_hold import select_train_refinement_seeds
+
+    bars = load_fixture_daily()
+    train_end_i = int(len(bars) * 0.6) - 1
+
+    def row(variant_id: str, stable_pnl: float, crossing_pnl: float):
+        stable = TradeRow(
+            variant_id=variant_id,
+            entry_ts=str(bars.index[10]),
+            exit_ts=str(bars.index[11]),
+            dte_at_entry=28,
+            strike=400.0,
+            exit_reason="take_profit",
+            net_pnl_pct=stable_pnl,
+            pnl_usd=0.0,
+            entry_mid=5.0,
+            exit_mid=5.0,
+            entry_fill=5.0,
+            bars_held=1,
+        )
+        crossing = TradeRow(
+            variant_id=variant_id,
+            entry_ts=str(bars.index[train_end_i]),
+            exit_ts=str(bars.index[train_end_i + 1]),
+            dte_at_entry=28,
+            strike=400.0,
+            exit_reason="take_profit",
+            net_pnl_pct=crossing_pnl,
+            pnl_usd=0.0,
+            entry_mid=5.0,
+            exit_mid=5.0,
+            entry_fill=5.0,
+            bars_held=1,
+        )
+        train, validation, test, _ = partition_trades_three_way(
+            [stable, crossing], bars
+        )
+        return summarize_three_way_split(
+            train, validation, test, variant_id=variant_id
+        )
+
+    before = [row("a", 0.02, -999.0), row("b", 0.01, 999.0)]
+    after = [row("a", 0.02, 999.0), row("b", 0.01, -999.0)]
+    assert [
+        r["variant_id"]
+        for r in select_train_refinement_seeds(before, top_k=1, min_trades=1)
+    ] == [
+        r["variant_id"]
+        for r in select_train_refinement_seeds(after, top_k=1, min_trades=1)
+    ]
+
+
 def test_test_period_perturbation_cannot_change_refinement_specs():
     from xsp_killer.backtest.regime_hold import (
         refine_stage_a,

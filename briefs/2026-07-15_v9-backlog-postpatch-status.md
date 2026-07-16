@@ -58,6 +58,15 @@ Plan: `briefs/2026-07-15_prod-briefs-xsp-code-plan.md`. Safe CODE only; no `LIVE
 
 Baseline `config/lane_a_rules.yaml` `dte_max: 60` **unchanged**.
 
+## Prod-briefs CODE plan (2026-07-16) — **Done**
+
+Plan: `briefs/2026-07-16_prod-briefs-k170-plan.md`. Safe CODE only; log-only notes; no `LIVE_*` flips; no SDF/Dupire/Turbovec prod.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | K170 log-only macro weather | **Done** | `k170` YAML + `load_k170_notes` + monitor extras; brief `xsp-2026-07-16_k170-…` |
+| — | Nagus alignment on UW plan | **Done** | Hygiene note on `briefs/2026-07-16_uw-lane-a-backtest-plan.md` |
+
 ## Verdict (unchanged)
 
 **NO-GO live RH writes.** Paper soak on VPS **GO**. David path tomorrow: **reads-only** after token path + pin check, then stop.

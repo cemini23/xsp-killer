@@ -16,6 +16,7 @@ from xsp_killer.macro_weather_notes import (
     load_k161_notes,
     load_k162_notes,
     load_k167_notes,
+    load_k170_notes,
 )
 
 
@@ -344,6 +345,80 @@ def test_build_monitor_macro_weather_extras_k167_from_prod_config():
     assert extras["sox_mu_bounce"]["no_chase_overnight"] is True
 
 
+def test_load_k170_notes_prod_config():
+    notes = load_k170_notes()
+    assert notes.get("version") == "2026-07-16"
+    assert notes["korea_memory_semis"]["overnight_posture"] == "conditional"
+    assert notes["sox_support"]["level"] == 12000
+    assert notes["dxy_breakdown"]["flag"] == "may_uptrend_break_test"
+    assert notes["dxy_breakdown"]["level"] == 100.50
+    assert notes["dxy_breakdown"]["overnight_posture"] == "tighten"
+    assert notes["us_reindustrialization"]["no_new_rh_sleeve"] is True
+    assert notes["us_reindustrialization"]["context_only"] is True
+    assert notes["theory_shelf"]["no_integral_solver"] is True
+    assert notes["turbovec"]["no_prod_index_swap"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k170(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k170": {
+                    "version": "2026-07-16",
+                    "korea_memory_semis": {"overnight_posture": "conditional"},
+                    "sox_support": {"level": 12000},
+                    "dxy_breakdown": {
+                        "flag": "may_uptrend_break_test",
+                        "level": 100.50,
+                        "overnight_posture": "tighten",
+                    },
+                    "us_reindustrialization": {
+                        "context_only": True,
+                        "no_new_rh_sleeve": True,
+                    },
+                    "theory_shelf": {"no_integral_solver": True},
+                    "turbovec": {"no_prod_index_swap": True},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k170_notes=load_k170_notes(cfg),
+        notes_path=cfg,
+    )
+    assert extras is not None
+    assert extras["k170_version"] == "2026-07-16"
+    assert extras["korea_memory_semis"]["overnight_posture"] == "conditional"
+    assert extras["sox_support"]["level"] == 12000
+    assert extras["dxy_breakdown"]["overnight_posture"] == "tighten"
+    assert extras["us_reindustrialization"]["no_new_rh_sleeve"] is True
+    assert extras["theory_shelf"]["no_integral_solver"] is True
+    assert extras["turbovec"]["no_prod_index_swap"] is True
+
+
+def test_build_monitor_macro_weather_extras_k170_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    assert extras is not None
+    assert extras["k170_version"] == "2026-07-16"
+    assert extras["korea_memory_semis"]["overnight_posture"] == "conditional"
+    assert extras["sox_support"]["level"] == 12000
+    assert extras["dxy_breakdown"]["level"] == 100.50
+    assert extras["dxy_breakdown"]["overnight_posture"] == "tighten"
+    assert extras["us_reindustrialization"]["no_new_rh_sleeve"] is True
+    assert extras["theory_shelf"]["no_integral_solver"] is True
+    assert extras["turbovec"]["no_prod_index_swap"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -363,10 +438,15 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k161_version"] == "2026-07-13"
     assert report.macro_weather_extras["k162_version"] == "2026-07-13"
     assert report.macro_weather_extras["k167_version"] == "2026-07-15"
+    assert report.macro_weather_extras["k170_version"] == "2026-07-16"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
     assert "sentiment_capitulation" in report.macro_weather_extras
     assert "oil_vs_2yr" in report.macro_weather_extras
     assert "moontower_volga" in report.macro_weather_extras
+    assert "korea_memory_semis" in report.macro_weather_extras
+    assert "dxy_breakdown" in report.macro_weather_extras
+    assert "theory_shelf" in report.macro_weather_extras
+    assert "turbovec" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

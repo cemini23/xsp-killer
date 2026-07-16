@@ -46,6 +46,11 @@ def load_k167_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k167")
 
 
+def load_k170_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K170 Macro Charts Korea/SOX/DXY + re-industrialization notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k170")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -91,9 +96,10 @@ def build_monitor_macro_weather_extras(
     k161_notes: dict[str, Any] | None = None,
     k162_notes: dict[str, Any] | None = None,
     k167_notes: dict[str, Any] | None = None,
+    k170_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155/K158/K161/K162/K167 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155/K158/K161/K162/K167/K170 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -103,6 +109,7 @@ def build_monitor_macro_weather_extras(
     k161 = k161_notes if k161_notes is not None else load_k161_notes(path)
     k162 = k162_notes if k162_notes is not None else load_k162_notes(path)
     k167 = k167_notes if k167_notes is not None else load_k167_notes(path)
+    k170 = k170_notes if k170_notes is not None else load_k170_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -159,6 +166,19 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k167:
                 extras[key] = k167[key]
+
+    if k170:
+        extras["k170_version"] = k170.get("version")
+        for key in (
+            "korea_memory_semis",
+            "sox_support",
+            "dxy_breakdown",
+            "us_reindustrialization",
+            "theory_shelf",
+            "turbovec",
+        ):
+            if key in k170:
+                extras[key] = k170[key]
 
     return extras
 

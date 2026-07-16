@@ -107,3 +107,28 @@ k167:
   software_igv:
     context_only: true
     note: "software/IGV strength after IBM wipe is supportive context, not a RH software sleeve"
+
+# K170 — Macro Charts Korea/SOX/DXY + Capital Flows re-industrialization (log-only; extends K155).
+k170:
+  version: "2026-07-16"
+  korea_memory_semis:
+    overnight_posture: conditional  # conditional on SOX ~12k + no Korea liquidity cascade
+    note: "Korea levered-ETF clamp / Memory late-Q3 risk; overnight conditional on SOX ~12k support + no Korea liquidity cascade"
+  sox_support:
+    level: 12000  # ~$12k
+    note: "SOX ~$12k support watch"
+  dxy_breakdown:
+    flag: may_uptrend_break_test
+    level: 100.50
+    overnight_posture: tighten  # prefer tighter overnight until close confirms
+    note: "DXY May-uptrend / ~100.50 break test — tighten overnight until close confirms"
+  us_reindustrialization:
+    context_only: true
+    no_new_rh_sleeve: true
+    note: "US re-industrialization / defense stack = regime context for chips/industrials only"
+  theory_shelf:
+    no_integral_solver: true
+    note: "SDF-from-options + Dupire SPDE = REFERENCE only; do not implement solvers"
+  turbovec:
+    no_prod_index_swap: true
+    note: "optional local RAG experiment only; no prod index swap without soak"

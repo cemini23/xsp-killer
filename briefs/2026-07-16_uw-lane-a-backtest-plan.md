@@ -26,6 +26,25 @@ python3 scripts/backtest_lane_a.py --mode uw --start 2024-01-01 \
     --variants active --sweep tp,dte --mcpt --out reports/backtest/
 ```
 
+### Nagus alignment (wiki pushed 2026-07-16)
+
+Source: `@concepts/nagus-ops-control-plane.md` (OSINT wiki) + laptop MVP
+`scripts/xsp_ops/` (sensor→parse→land→enqueue→triage→packet→scale).
+
+| Layer | Nagus / xsp_ops | This backtest |
+|-------|-----------------|---------------|
+| Role | Ops **control plane** (live state moves) | Strategy **ranker** (historical SPY→modeled premiums) |
+| Sensors | Macro Charts RSS | UW OHLC (or fixture) |
+| Brain / queue | `.local/ops/xsp/{state,queue,packets}/` | `reports/backtest/*.json\|md` + `.local/uw_cache/` |
+| Token discipline | One thin CLI role per job | One CLI; no LLM in the loop |
+| Promote | Human copies packets → `briefs/xsp-*` | Human uses rankings to prioritize soak variants |
+
+**Next (optional, not blocking UW key today):** treat a backtest run as another
+**sensor** into Nagus — write a summary JSON under `.local/ops/xsp/state/` or
+enqueue a triage packet when a variant window looks healthy (MCPT pass). Do
+**not** auto-promote briefs or flip `LIVE_*`. Full `xsp_ops` loop stays on the
+laptop OSINT tree unless we deliberately port it to `/opt/xsp-killer`.
+
 ---
 
 ## Goal / Done / Non-goals

@@ -5,6 +5,7 @@ __pycache__/
 .hypothesis/
 .env
 .local/
+.worktrees/
 .venv/
 venv/
 logs/*.jsonl

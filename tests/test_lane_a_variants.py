@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -71,6 +73,96 @@ def test_write_variants_state_preserves_target_when_replace_fails(
         lane_a_variants._write_variants_state({"variants": {"after": {}}}, state)
 
     assert state.read_text(encoding="utf-8") == original
+
+
+def test_variants_rmw_lock_fails_closed_when_lock_acquisition_fails(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "variants-state.json"
+
+    def fail_lock(_path):
+        raise OSError("lock backend denied access")
+
+    monkeypatch.setattr(lane_a_variants, "_variants_state_lock", fail_lock)
+
+    with pytest.raises(RuntimeError, match="cannot lock variant state"):
+        with lane_a_variants._variants_rmw_lock(state):
+            pytest.fail("mutating cycle proceeded without its lock")
+
+
+def test_concurrent_direct_variant_entries_preserve_both_updates(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "variants-state.json"
+    state.write_text('{"variants": {}}\n', encoding="utf-8")
+    (tmp_path / "briefs").mkdir()
+    (tmp_path / "logs").mkdir()
+
+    first_inside = threading.Event()
+    second_inside = threading.Event()
+    second_lock_attempt = threading.Event()
+    release_first = threading.Event()
+
+    monkeypatch.setattr(lane_a_variants, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        lane_a_variants,
+        "merged_rules_path",
+        lambda _spec: tmp_path / "rules.yaml",
+    )
+    acquire_lock = lane_a_variants._variants_state_lock
+
+    def observed_lock(path):
+        if threading.current_thread().name == "race-second":
+            second_lock_attempt.set()
+        return acquire_lock(path)
+
+    monkeypatch.setattr(lane_a_variants, "_variants_state_lock", observed_lock)
+
+    def fake_entry(*, state_path, **_kwargs):
+        variant_id = state_path.name.removeprefix(".variant-").removesuffix(
+            "-state.json"
+        )
+        if variant_id == "race_a":
+            first_inside.set()
+            assert release_first.wait(2)
+        else:
+            second_inside.set()
+        slice_state = json.loads(state_path.read_text(encoding="utf-8"))
+        slice_state["entry_log"] = [{"variant_id": variant_id}]
+        state_path.write_text(json.dumps(slice_state), encoding="utf-8")
+        return SimpleNamespace(entered=False, position=None)
+
+    monkeypatch.setattr(lane_a_variants, "run_paper_entry", fake_entry)
+
+    specs = [
+        VariantSpec("race_a", "first racer", True, {}),
+        VariantSpec("race_b", "second racer", True, {}),
+    ]
+    errors = []
+
+    def run(spec):
+        try:
+            run_variant_entry(spec, state_path=state)
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    first = threading.Thread(target=run, args=(specs[0],), name="race-first")
+    second = threading.Thread(target=run, args=(specs[1],), name="race-second")
+    first.start()
+    assert first_inside.wait(2)
+    second.start()
+    assert second_lock_attempt.wait(2)
+    second_entered_before_first_commit = second_inside.is_set()
+    release_first.set()
+    first.join(2)
+    second.join(2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert second_entered_before_first_commit is False
+    persisted = json.loads(state.read_text(encoding="utf-8"))
+    assert set(persisted["variants"]) == {"race_a", "race_b"}
 
 
 def test_load_variant_specs():

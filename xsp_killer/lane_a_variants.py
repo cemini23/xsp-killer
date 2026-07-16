@@ -139,6 +139,10 @@ def variant_state_slice(root: dict[str, Any], variant_id: str) -> dict[str, Any]
 _variants_lock_state = threading.local()
 
 
+class VariantsStateLockError(RuntimeError):
+    """Raised when a mutating variants-state transaction cannot lock safely."""
+
+
 def _variants_state_lock(lock_path: Path):
     return open_ex_lock(lock_path)
 
@@ -179,10 +183,7 @@ def _write_variants_state(root: dict[str, Any], path: Path | None = None) -> Pat
 
 @contextmanager
 def _variants_rmw_lock(path: Path | None = None):
-    """Best-effort exclusive lock around a load→run→save cycle on the shared
-    variants state file. Guards against the intraday/entry/monitor timers
-    colliding on the same variants_state.json. Non-fatal if flock is
-    unavailable (e.g. unsupported filesystem): the cycle proceeds unlocked."""
+    """Lock a complete variants-state mutation cycle, failing closed."""
     p = path or DEFAULT_VARIANTS_STATE
     lockfile = _variants_lock_path(p)
     key = str(lockfile.resolve())
@@ -191,24 +192,24 @@ def _variants_rmw_lock(path: Path | None = None):
         yield
         return
 
-    fh = None
     try:
         fh = _variants_state_lock(lockfile)
-    except Exception as exc:  # noqa: BLE001 — best-effort lock
-        logger.warning("variants RMW lock unavailable, proceeding unlocked: %s", exc)
-        fh = None
-    if fh is not None:
-        held.add(key)
+    except Exception as exc:  # noqa: BLE001
+        raise VariantsStateLockError(
+            f"cannot lock variant state {p} using sidecar {lockfile}: {exc}"
+        ) from exc
+    held.add(key)
     try:
         yield
     finally:
-        if fh is not None:
-            held.discard(key)
+        held.discard(key)
+        try:
             try:
                 flock_un(fh)
+            finally:
                 fh.close()
-            except Exception:  # noqa: BLE001 — best-effort release
-                pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("variants RMW lock release failed for %s: %s", lockfile, exc)
 
 
 def _baseline_brief_path(baseline_state_path: Path, default_path: Path) -> Path:
@@ -224,8 +225,16 @@ def save_variant_state_slice(
     *,
     path: Path | None = None,
 ) -> None:
-    root.setdefault("variants", {})[variant_id] = slice_state
-    _write_variants_state(root, path)
+    p = path or DEFAULT_VARIANTS_STATE
+    key = str(_variants_lock_path(p).resolve())
+    already_locked = key in _held_variants_locks()
+    with _variants_rmw_lock(p):
+        target = root if already_locked else load_variants_state(p)
+        target.setdefault("variants", {})[variant_id] = slice_state
+        _write_variants_state(target, p)
+        if target is not root:
+            root.clear()
+            root.update(target)
 
 
 def ensure_variant_slices(
@@ -255,6 +264,27 @@ def _variant_intraday_enabled(spec: VariantSpec) -> bool:
 
 
 def run_variant_entry(
+    spec: VariantSpec,
+    *,
+    root_state: dict[str, Any] | None = None,
+    state_path: Path | None = None,
+    now_et: datetime | None = None,
+    force: bool = False,
+    intraday: bool = False,
+) -> Any:
+    """Run one entry as a complete, locked state transaction."""
+    with _variants_rmw_lock(state_path):
+        return _run_variant_entry_locked(
+            spec,
+            root_state=root_state,
+            state_path=state_path,
+            now_et=now_et,
+            force=force,
+            intraday=intraday,
+        )
+
+
+def _run_variant_entry_locked(
     spec: VariantSpec,
     *,
     root_state: dict[str, Any] | None = None,
@@ -294,6 +324,23 @@ def run_variant_entry(
 
 
 def run_variant_monitor(
+    spec: VariantSpec,
+    *,
+    root_state: dict[str, Any] | None = None,
+    state_path: Path | None = None,
+    now_et: datetime | None = None,
+) -> Any:
+    """Run one monitor pass as a complete, locked state transaction."""
+    with _variants_rmw_lock(state_path):
+        return _run_variant_monitor_locked(
+            spec,
+            root_state=root_state,
+            state_path=state_path,
+            now_et=now_et,
+        )
+
+
+def _run_variant_monitor_locked(
     spec: VariantSpec,
     *,
     root_state: dict[str, Any] | None = None,
@@ -508,6 +555,29 @@ def reset_soak(
     archive_dir: Path | None = None,
     clear_baseline_events: bool = True,
 ) -> dict[str, Any]:
+    """Archive and reset the soak within one locked state transaction."""
+    with _variants_rmw_lock(state_path):
+        return _reset_soak_locked(
+            commit=commit,
+            reason=reason,
+            state_path=state_path,
+            baseline_state_path=baseline_state_path,
+            scoreboard_path=scoreboard_path,
+            archive_dir=archive_dir,
+            clear_baseline_events=clear_baseline_events,
+        )
+
+
+def _reset_soak_locked(
+    *,
+    commit: str | None = None,
+    reason: str = "post-patch scoreboard epoch",
+    state_path: Path | None = None,
+    baseline_state_path: Path | None = None,
+    scoreboard_path: Path | None = None,
+    archive_dir: Path | None = None,
+    clear_baseline_events: bool = True,
+) -> dict[str, Any]:
     """Archive pre-reset soak data and start a fresh scoreboard epoch."""
     reset_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     sp = state_path or DEFAULT_VARIANTS_STATE
@@ -575,6 +645,27 @@ def reset_soak(
 
 
 def clear_pnl_epoch(
+    *,
+    commit: str | None = None,
+    reason: str = "unreliable PnL cleared — per-variant epoch restart",
+    state_path: Path | None = None,
+    baseline_state_path: Path | None = None,
+    scoreboard_path: Path | None = None,
+    archive_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Clear PnL within one locked variants-state transaction."""
+    with _variants_rmw_lock(state_path):
+        return _clear_pnl_epoch_locked(
+            commit=commit,
+            reason=reason,
+            state_path=state_path,
+            baseline_state_path=baseline_state_path,
+            scoreboard_path=scoreboard_path,
+            archive_dir=archive_dir,
+        )
+
+
+def _clear_pnl_epoch_locked(
     *,
     commit: str | None = None,
     reason: str = "unreliable PnL cleared — per-variant epoch restart",
@@ -1448,6 +1539,23 @@ def _build_dip_swing_cluster(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def build_scoreboard(
+    *,
+    config_path: Path | None = None,
+    state_path: Path | None = None,
+    baseline_state_path: Path | None = None,
+    out_path: Path | None = None,
+) -> Path:
+    """Build the scoreboard within one locked variants-state transaction."""
+    with _variants_rmw_lock(state_path):
+        return _build_scoreboard_locked(
+            config_path=config_path,
+            state_path=state_path,
+            baseline_state_path=baseline_state_path,
+            out_path=out_path,
+        )
+
+
+def _build_scoreboard_locked(
     *,
     config_path: Path | None = None,
     state_path: Path | None = None,

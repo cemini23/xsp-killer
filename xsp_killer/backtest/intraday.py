@@ -82,7 +82,7 @@ def in_entry_window(ts: datetime) -> bool:
     t = now.time()
     if not (ENTRY_WINDOW_START <= t < ENTRY_WINDOW_END):
         return False
-    return xsp_session_open(now)
+    return xsp_session_open(now) and is_exchange_session(now)
 
 
 def exit_session_open(ts: datetime) -> bool:
@@ -354,10 +354,14 @@ def run_intraday_backtest(
     lane_rules = LaneRules.from_yaml(rules_path)
     if max_hold_sessions is None:
         effective_hold_cap = lane_rules.max_hold_sessions
-    elif isinstance(max_hold_sessions, bool) or max_hold_sessions < 0:
+    elif (
+        isinstance(max_hold_sessions, bool)
+        or not isinstance(max_hold_sessions, int)
+        or max_hold_sessions < 0
+    ):
         raise ValueError("max_hold_sessions must be a nonnegative integer")
     else:
-        effective_hold_cap = int(max_hold_sessions)
+        effective_hold_cap = max_hold_sessions
     replay_exit_rules = replace(lane_rules, max_hold_sessions=0)
     ta_rules = TaRules.from_yaml(rules_path)
     econ = PaperEconomics.from_yaml(rules_path)

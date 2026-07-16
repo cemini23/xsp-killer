@@ -175,6 +175,14 @@ def test_entry_window_rejects_weekends_and_closed_session():
     assert in_entry_window(naive)
 
 
+def test_entry_window_requires_real_exchange_session():
+    from xsp_killer.backtest.intraday import in_entry_window
+
+    assert not in_entry_window(et(2024, 7, 4, 15, 45))
+    assert in_entry_window(et(2024, 7, 5, 15, 45))
+    assert not in_entry_window(et(2024, 7, 7, 15, 45))
+
+
 def test_session_date_order_only_includes_session_open_dates():
     """Open bars only; Sun 20:15 + Mon morning share Monday exchange session key."""
     from xsp_killer.backtest.intraday import session_date_order
@@ -912,6 +920,24 @@ def test_replay_explicit_hold_cap_overrides_yaml(
     assert capped
     assert {row.sessions_held for row in capped} == {explicit_cap}
     assert set(seen_evaluator_caps) == {0}
+
+
+@pytest.mark.parametrize("invalid_cap", [1.0, "1", True, False, -1])
+def test_replay_rejects_non_integer_or_negative_explicit_hold_cap(
+    tmp_path, invalid_cap
+):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    rules = _rules(tmp_path)
+    with pytest.raises(
+        ValueError, match="max_hold_sessions must be a nonnegative integer"
+    ):
+        run_intraday_backtest(
+            pd.DataFrame(),
+            rules,
+            variant_id="invalid_explicit_cap",
+            max_hold_sessions=invalid_cap,
+        )
 
 
 # ---------------------------------------------------------------------------

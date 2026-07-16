@@ -41,7 +41,7 @@ def test_load_variant_specs():
     assert "v2_yellow_top_quartile_bounce" in ids
     assert "v2_yellow_mid_bounce" in ids
     active_ids = {s.variant_id for s in specs if s.active}
-    # 2026-07-16 UW BT: dip-swing grid pruned; 28 DTE ATM cluster + 14dte + stack3 + mid-tenor
+    # 2026-07-16 UW BT: dip-swing pruned; soak 28 DTE ATM cluster
     assert len(active_ids) == 6
     assert "v2_28dte_atm" in active_ids
     assert "v2_28dte_easy_tp" in active_ids

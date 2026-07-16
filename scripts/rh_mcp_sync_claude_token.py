@@ -10,8 +10,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from xsp_killer.robinhood_mcp import (  # noqa: E402
+    default_token_path,
+    validate_token_path,
+)
+
 DEFAULT_CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"
-DEFAULT_TOKEN_PATH = ROOT / ".local" / "robinhood_mcp_token.json"
 
 
 def _load_claude_robinhood_entry(creds_path: Path) -> dict:
@@ -25,7 +31,9 @@ def _load_claude_robinhood_entry(creds_path: Path) -> dict:
         url = str(entry.get("serverUrl") or "")
         if "agent.robinhood.com/mcp/trading" in url:
             return entry
-    raise SystemExit("No robinhood-trading entry in Claude mcpOAuth — run /mcp auth first")
+    raise SystemExit(
+        "No robinhood-trading entry in Claude mcpOAuth — run /mcp auth first"
+    )
 
 
 def _token_payload(entry: dict) -> dict:
@@ -55,8 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=DEFAULT_TOKEN_PATH,
-        help="xsp-killer token path (default: .local/robinhood_mcp_token.json)",
+        default=None,
+        help="token path (default: platform-local xsp-killer state directory)",
     )
     parser.add_argument(
         "--dry-run",
@@ -64,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Validate token present without writing",
     )
     args = parser.parse_args(argv)
+    output_path = validate_token_path(args.out or default_token_path())
 
     entry = _load_claude_robinhood_entry(args.claude_creds)
     payload = _token_payload(entry)
@@ -72,10 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         print("ok token present in Claude credentials")
         return 0
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.chmod(args.out, 0o600)
-    print(f"wrote {args.out} (mode 600)")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.chmod(output_path, 0o600)
+    print(f"wrote {output_path} (mode 600)")
     return 0
 
 

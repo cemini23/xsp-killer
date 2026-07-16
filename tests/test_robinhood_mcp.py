@@ -39,6 +39,18 @@ def test_default_token_path_uses_localappdata_on_windows(monkeypatch, tmp_path):
     )
 
 
+def test_default_token_path_falls_back_when_localappdata_missing(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(robinhood_mcp.sys, "platform", "win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(robinhood_mcp.Path, "home", lambda: tmp_path)
+
+    assert robinhood_mcp.default_token_path() == (
+        tmp_path / "AppData/Local/xsp-killer/robinhood_mcp_token.json"
+    )
+
+
 def test_default_token_path_uses_xdg_state_home_on_posix(monkeypatch, tmp_path):
     monkeypatch.setattr(robinhood_mcp.sys, "platform", "linux")
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
@@ -119,6 +131,52 @@ def test_adapter_rejects_symlink_resolving_under_repository(monkeypatch, tmp_pat
 
     with pytest.raises(RhMcpNotReady, match="development override"):
         RobinhoodMCPAdapter(RhMcpConfig(token_path=outside / "token.json"))
+
+
+def test_adapter_rejects_registered_onedrive_root(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    synced = tmp_path / "Cloud"
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.setattr(
+        robinhood_mcp,
+        "_registered_onedrive_roots",
+        lambda: {synced},
+        raising=False,
+    )
+    for env_name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.delenv(
+        "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT",
+        raising=False,
+    )
+
+    with pytest.raises(RhMcpNotReady, match="OneDrive"):
+        RobinhoodMCPAdapter(RhMcpConfig(token_path=synced / "token.json"))
+
+
+def test_adapter_rejects_case_insensitive_onedrive_path_component(
+    monkeypatch, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(robinhood_mcp, "ROOT", repo)
+    monkeypatch.setattr(
+        robinhood_mcp,
+        "_registered_onedrive_roots",
+        lambda: set(),
+        raising=False,
+    )
+    for env_name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.delenv(
+        "XSP_RH_MCP_ALLOW_REPO_TOKEN_FOR_DEVELOPMENT",
+        raising=False,
+    )
+
+    token_path = tmp_path / "oNeDrIvE - Example" / "token.json"
+    with pytest.raises(RhMcpNotReady, match="OneDrive"):
+        RobinhoodMCPAdapter(RhMcpConfig(token_path=token_path))
 
 
 def test_rh_config_and_docs_keep_operational_tokens_outside_repo():

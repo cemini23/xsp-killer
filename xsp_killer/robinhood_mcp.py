@@ -59,9 +59,9 @@ REPO_TOKEN_DEVELOPMENT_OVERRIDE = (
 def default_token_path() -> Path:
     """Return the platform-local, non-repository OAuth token location."""
     if sys.platform == "win32":
-        return Path(os.environ["LOCALAPPDATA"]) / "xsp-killer" / (
-            "robinhood_mcp_token.json"
-        )
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        base = Path(local_app_data) if local_app_data else Path.home() / "AppData/Local"
+        return base / "xsp-killer" / "robinhood_mcp_token.json"
     state_home = os.getenv("XDG_STATE_HOME")
     base = Path(state_home).expanduser() if state_home else Path.home() / ".local/state"
     return base / "xsp-killer" / "robinhood_mcp_token.json"
@@ -76,18 +76,58 @@ def _development_repo_token_allowed() -> bool:
     }
 
 
-def _validate_token_path(token_path: Path) -> Path:
+def _registered_onedrive_roots() -> set[Path]:
+    """Return OneDrive account folders registered for the Windows user."""
+    if sys.platform != "win32":
+        return set()
+    try:
+        import winreg
+    except ImportError:
+        return set()
+
+    roots: set[Path] = set()
+    accounts_key = r"Software\Microsoft\OneDrive\Accounts"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, accounts_key) as accounts:
+            index = 0
+            while True:
+                try:
+                    account_name = winreg.EnumKey(accounts, index)
+                except OSError:
+                    break
+                index += 1
+                try:
+                    with winreg.OpenKey(accounts, account_name) as account:
+                        raw, _ = winreg.QueryValueEx(account, "UserFolder")
+                except OSError:
+                    continue
+                if isinstance(raw, str) and raw.strip():
+                    roots.add(
+                        Path(os.path.expandvars(raw.strip())).expanduser().resolve()
+                    )
+    except OSError:
+        return set()
+    return roots
+
+
+def validate_token_path(token_path: Path) -> Path:
+    """Resolve and reject operational token paths in repositories or sync roots."""
     resolved = token_path.expanduser().resolve()
-    protected_roots = {ROOT.resolve()}
+    protected_roots = {ROOT.resolve(), *_registered_onedrive_roots()}
     for env_name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
         raw = os.getenv(env_name, "").strip()
         if raw:
             protected_roots.add(Path(raw).expanduser().resolve())
-    unsafe = any(
+    under_protected_root = any(
         resolved == protected or resolved.is_relative_to(protected)
         for protected in protected_roots
     )
-    if unsafe and not _development_repo_token_allowed():
+    has_onedrive_component = any(
+        part.casefold().startswith("onedrive") for part in resolved.parts
+    )
+    if (under_protected_root or has_onedrive_component) and not (
+        _development_repo_token_allowed()
+    ):
         raise RhMcpNotReady(
             "rh_mcp: operational token path resolves inside the repository or "
             "a OneDrive workspace; move it to the platform state directory or "
@@ -254,7 +294,7 @@ class RhMcpConfig:
         return cls(
             agentic_account_id=account,
             mcp_url=str(data.get("mcp_url") or cls.mcp_url),
-            token_path=_validate_token_path(candidate),
+            token_path=validate_token_path(candidate),
             allowed_chain_symbols=tuple(str(s).upper() for s in symbols),
             live_exits=bool(data.get("live_exits", False)),
             live_entries=bool(data.get("live_entries", False)),
@@ -514,7 +554,7 @@ class RobinhoodMCPAdapter:
         http_post: Callable[..., Any] | None = None,
     ) -> None:
         self.config = config or RhMcpConfig.load()
-        self.config.token_path = _validate_token_path(self.config.token_path)
+        self.config.token_path = validate_token_path(self.config.token_path)
         self._http_post = http_post or self._default_http_post
         self._last_review: dict[str, Any] | None = None
         self._active_grant: dict[str, Any] | None = None

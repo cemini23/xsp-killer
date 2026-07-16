@@ -19,6 +19,10 @@ import yaml
 
 from xsp_killer.backtest.option_model import synthesize_call_premium
 from xsp_killer.backtest.variants import entry_knobs_from_rules_dict
+from xsp_killer.backtest.volume_gate import (
+    prior_day_volume_percentile,
+    volume_gate_allows,
+)
 from xsp_killer.lane_a_entry import round_xsp_strike
 from xsp_killer.lane_a_monitor import (
     LaneAPosition,
@@ -76,6 +80,8 @@ class TradeRow:
     entry_reason: str = ""
     sessions_held: int = 0
     bar_interval: str = "1d"
+    # Analysis-only: any mark within 90 min of entry had ret_pct > 0 before exit.
+    early_green: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -455,6 +461,19 @@ def run_backtest(
             if prev_close <= prev2:
                 result.n_entries_blocked += 1
                 continue
+
+        vol_pctile = prior_day_volume_percentile(
+            bars["volume"] if "volume" in bars.columns else pd.Series(dtype=float),
+            i,
+            lookback=int(knobs.get("volume_gate_lookback") or 63),
+        )
+        vol_ok, _vol_reason = volume_gate_allows(
+            prior_vol_pctile=vol_pctile,
+            max_pctile=knobs.get("volume_gate_max_pctile"),
+        )
+        if not vol_ok:
+            result.n_entries_blocked += 1
+            continue
 
         # Open new paper position
         dte_target = _pick_dte(knobs)

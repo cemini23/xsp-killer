@@ -88,10 +88,25 @@ def entry_knobs_from_rules_dict(data: dict[str, Any]) -> dict[str, Any]:
         "intraday_entry_enabled": bool(ta_entry.get("intraday_enabled", False)),
         "require_vwap_reclaim": bool(ta_entry.get("require_vwap_reclaim", False)),
         "stop_loss_pct": float(exit_cfg.get("stop_loss_pct", 0.20)),
+        "stop_loss_pct_early": (
+            float(exit_cfg["stop_loss_pct_early"])
+            if exit_cfg.get("stop_loss_pct_early") is not None
+            else None
+        ),
+        "stop_loss_early_minutes": int(exit_cfg.get("stop_loss_early_minutes", 90)),
         "take_profit_pct": float(exit_cfg.get("take_profit_pct", 0.20)),
         "swing_hold": bool(exit_cfg.get("swing_hold", False)),
         "max_hold_dte": int(exit_cfg.get("max_hold_dte", 0)),
         "require_upper_bb_for_take_profit": bool(
             exit_cfg.get("require_upper_bb_for_take_profit", True)
         ),
+        "volume_gate_max_pctile": (
+            float(entry["volume_gate_max_pctile"])
+            if entry.get("volume_gate_max_pctile") is not None
+            else None
+        ),
+        "volume_gate_lookback": int(entry.get("volume_gate_lookback", 63)),
+        # Entry clock window (ET). Defaults match production close window.
+        "window_start_et": str(entry.get("window_start_et", "15:45")),
+        "window_end_et": str(entry.get("window_end_et", "16:00")),
     }

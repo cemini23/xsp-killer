@@ -42,6 +42,7 @@ __all__ = [
     "HOLD_SESSIONS_GRID",
     "IV_SEEDS",
     "SLIPPAGE_MULTS",
+    "VOLUME_GATES",
     "StageASpec",
     "annotate_behavior_duplicates",
     "build_stage_a_grid",
@@ -61,34 +62,35 @@ SLIPPAGE_MULTS = (1.0, 1.5, 2.0)
 
 MAX_GRID_DEFAULT = 240
 
-# Coarse Stage A fixes DTE/TP/SL; refine varies them later.
-COARSE_DTE = 28
-COARSE_TP = 0.20
-COARSE_SL = 0.30
+# Nagus thesis (2026-07-16 follow-up):
+# - ATM calls ~30 DTE at the close; TP 20–50%
+# - Daily *volume* (quiet/slow days) is the primary gate — not regime
+# - 10% SL in the first ~90 minutes; then widen (late SL on the refine axis)
+COARSE_DTE = 30
+COARSE_TP = 0.30
+COARSE_SL = 0.20  # late / widened stop
+COARSE_SL_EARLY = 0.10
+COARSE_SL_EARLY_MINUTES = 90
 
-REFINE_DTE = (21, 28, 35)
-REFINE_TP = (0.10, 0.15, 0.20, 0.25)
-REFINE_SL = (0.20, 0.30, 0.40)
+REFINE_DTE = (25, 28, 30)
+REFINE_TP = (0.20, 0.30, 0.40, 0.50)
+REFINE_SL = (0.15, 0.20, 0.30)  # late SL only; early stays 10%
 
-# Explicit unique regime cells: GREEN once; GYB fraction × bounce (no GREEN dups).
+# Volume gate: max prior-day volume percentile (None = ungated).
+VOLUME_GATES: tuple[tuple[float | None, str], ...] = (
+    (None, "vall"),
+    (0.33, "vq33"),
+    (0.50, "vq50"),
+)
+
+# Regime is secondary. OFF = volume decides; GREEN kept as contrast only.
 REGIMES: tuple[tuple[str, float | None, bool | None, str], ...] = (
+    ("OFF", None, None, "off"),
     ("GREEN", None, None, "green"),
-    *tuple(
-        (
-            "GREEN_OR_YELLOW_BOUNCE",
-            frac,
-            bounce,
-            f"gyb{int(frac * 100)}b{int(bounce)}",
-        )
-        for frac in (0.40, 0.50, 0.60, 0.75)
-        for bounce in (False, True)
-    ),
 )
 
-PRIOR_MODES: tuple[tuple[bool, str], ...] = (
-    (False, "p0"),
-    (True, "p1"),
-)
+# Quiet buying does not require a prior-day SPY up-move.
+PRIOR_MODES: tuple[tuple[bool, str], ...] = ((False, "p0"),)
 
 
 @dataclass
@@ -122,10 +124,14 @@ def _vid(
     regime_label: str,
     prior_label: str,
     hold: int,
+    vol_label: str = "vall",
 ) -> str:
     tp_i = int(round(tp * 100))
     sl_i = int(round(sl * 100))
-    return f"rha_dte{dte}_tp{tp_i}_sl{sl_i}_{regime_label}_{prior_label}_h{hold}"
+    return (
+        f"rha_dte{dte}_tp{tp_i}_sl{sl_i}_{regime_label}_{vol_label}_"
+        f"{prior_label}_h{hold}"
+    )
 
 
 def _patch_for(
@@ -136,6 +142,7 @@ def _patch_for(
     yellow_frac_min: float | None,
     yellow_require_bounce: bool | None,
     prior_day_spy_positive: bool,
+    volume_gate_max_pctile: float | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "dte_pick": "target",
@@ -143,7 +150,10 @@ def _patch_for(
         "strike_pick": "atm_only",
         "regime_gate": regime_gate,
         "prior_day_spy_positive": bool(prior_day_spy_positive),
+        "volume_gate_lookback": 63,
     }
+    if volume_gate_max_pctile is not None:
+        entry["volume_gate_max_pctile"] = float(volume_gate_max_pctile)
     if regime_gate == "GREEN_OR_YELLOW_BOUNCE":
         entry["regime_yellow_frac_min"] = float(
             0.50 if yellow_frac_min is None else yellow_frac_min
@@ -156,6 +166,8 @@ def _patch_for(
         "exit": {
             "take_profit_pct": float(tp),
             "stop_loss_pct": float(sl),
+            "stop_loss_pct_early": float(COARSE_SL_EARLY),
+            "stop_loss_early_minutes": int(COARSE_SL_EARLY_MINUTES),
             "require_upper_bb_for_take_profit": False,
             "swing_hold": False,
             "max_hold_dte": 0,
@@ -182,18 +194,34 @@ def _make_stage_a_spec(
     prior: bool,
     prior_label: str,
     hold: int,
+    volume_gate_max_pctile: float | None = None,
+    vol_label: str = "vall",
 ) -> StageASpec:
-    vid = _vid(dte, tp, sl, regime_label, prior_label, hold)
+    vid = _vid(
+        dte, tp, sl, regime_label, prior_label, hold, vol_label=vol_label
+    )
     patch = _patch_for(
-        dte, tp, sl, regime_gate, yellow_frac_min, yellow_require_bounce, prior
+        dte,
+        tp,
+        sl,
+        regime_gate,
+        yellow_frac_min,
+        yellow_require_bounce,
+        prior,
+        volume_gate_max_pctile=volume_gate_max_pctile,
     )
     merged = _deep_merge(deepcopy(BASE_28DTE_ATM_OVERRIDES), patch)
     logging_cfg = merged.setdefault("logging", {})
     logging_cfg["logic_version"] = f"xsp_lane_a_{vid}"
     prior_word = "positive" if prior else "none"
+    vol_word = (
+        "off"
+        if volume_gate_max_pctile is None
+        else f"max_pctile<={volume_gate_max_pctile}"
+    )
     desc = (
-        f"stageA dte={dte} tp={tp} sl={sl} regime={regime_gate} "
-        f"prior={prior_word} hold={hold}"
+        f"stageA dte={dte} tp={tp} sl={sl} early_sl={COARSE_SL_EARLY} "
+        f"regime={regime_gate} volume={vol_word} prior={prior_word} hold={hold}"
     )
     return StageASpec(
         spec=_spec_from_overrides(vid, merged, description=desc),
@@ -207,17 +235,21 @@ def build_stage_a_grid(
     allow_large: bool = False,
     max_grid: int = MAX_GRID_DEFAULT,
 ) -> list[StageASpec]:
-    """Bounded coarse Stage A grid: regime × prior × hold at fixed 28/TP20/SL30.
+    """Bounded coarse grid: volume × regime × hold at fixed 30/TP30/late-SL20.
 
-    Raises ``GridBudgetError`` before any backtest runs when over budget.
+    Early 10% SL is locked. Fine DTE/TP/late-SL via refine_stage_a.
     """
     if not coarse:
-        # Fine grid is produced via refine_stage_a from survivors.
         raise ValueError(
             "fine grid is produced by refine_stage_a, not build_stage_a_grid"
         )
 
-    n = len(REGIMES) * len(PRIOR_MODES) * len(HOLD_SESSIONS_GRID)
+    n = (
+        len(REGIMES)
+        * len(VOLUME_GATES)
+        * len(PRIOR_MODES)
+        * len(HOLD_SESSIONS_GRID)
+    )
     if n > max_grid and not allow_large:
         raise GridBudgetError(
             f"stage A coarse grid size {n} exceeds budget {max_grid}; "
@@ -226,7 +258,9 @@ def build_stage_a_grid(
 
     cells: list[StageASpec] = []
     seen: set[str] = set()
-    for reg, (prior, plabel), hold in product(REGIMES, PRIOR_MODES, HOLD_SESSIONS_GRID):
+    for reg, (vol_max, vol_label), (prior, plabel), hold in product(
+        REGIMES, VOLUME_GATES, PRIOR_MODES, HOLD_SESSIONS_GRID
+    ):
         gate, yfrac, ybounce, rlabel = reg
         cell = _make_stage_a_spec(
             dte=COARSE_DTE,
@@ -239,6 +273,8 @@ def build_stage_a_grid(
             prior=prior,
             prior_label=plabel,
             hold=int(hold),
+            volume_gate_max_pctile=vol_max,
+            vol_label=vol_label,
         )
         if cell.variant_id in seen:
             continue
@@ -249,11 +285,24 @@ def build_stage_a_grid(
 
 def _regime_label_from_entry(entry: dict[str, Any]) -> str:
     gate = str(entry.get("regime_gate") or "GREEN").upper()
+    if gate in {"OFF", "NONE", "ALWAYS"}:
+        return "off"
     if gate != "GREEN_OR_YELLOW_BOUNCE":
         return "green"
     frac = float(entry.get("regime_yellow_frac_min") or 0.50)
     bounce = bool(entry.get("regime_yellow_require_bounce") or False)
     return f"gyb{int(round(frac * 100))}b{int(bounce)}"
+
+
+def _vol_label_from_pctile(max_pctile: float | None) -> str:
+    if max_pctile is None:
+        return "vall"
+    for thresh, label in VOLUME_GATES:
+        if thresh is None:
+            continue
+        if abs(float(max_pctile) - float(thresh)) < 1e-9:
+            return label
+    return f"vq{int(round(float(max_pctile) * 100))}"
 
 
 def _row_seed_fields(
@@ -264,7 +313,7 @@ def _row_seed_fields(
     entry = ov.get("entry") or {}
     exit_cfg = ov.get("exit") or {}
     gate = str(
-        row.get("regime_gate") or entry.get("regime_gate") or "GREEN"
+        row.get("regime_gate") or entry.get("regime_gate") or "OFF"
     ).upper()
     yfrac = row.get("regime_yellow_frac_min", entry.get("regime_yellow_frac_min"))
     ybounce = row.get(
@@ -285,6 +334,9 @@ def _row_seed_fields(
         if row.get("stop_loss_pct") is not None
         else (exit_cfg.get("stop_loss_pct") or COARSE_SL)
     )
+    vol_raw = row.get(
+        "volume_gate_max_pctile", entry.get("volume_gate_max_pctile")
+    )
     return {
         "regime_gate": gate,
         "regime_yellow_frac_min": float(yfrac) if yfrac is not None else None,
@@ -296,6 +348,9 @@ def _row_seed_fields(
         "dte_target": dte,
         "take_profit_pct": tp,
         "stop_loss_pct": sl,
+        "volume_gate_max_pctile": (
+            float(vol_raw) if vol_raw is not None else None
+        ),
     }
 
 
@@ -357,6 +412,8 @@ def refine_stage_a(
             }
         )
         plabel = "p1" if prior else "p0"
+        vol_max = fields.get("volume_gate_max_pctile")
+        vol_label = _vol_label_from_pctile(vol_max)
         neighbors: list[StageASpec] = []
         for dte, tp, sl in _one_axis_refine_triples(fields):
             cell = _make_stage_a_spec(
@@ -370,6 +427,8 @@ def refine_stage_a(
                 prior=prior,
                 prior_label=plabel,
                 hold=int(hold),
+                volume_gate_max_pctile=vol_max,
+                vol_label=vol_label,
             )
             neighbors.append(cell)
         per_seed.append(neighbors)
@@ -416,13 +475,17 @@ def _enrich_row(
     validation_mean = float(row.get("validation_mean_net_pnl_pct") or 0.0)
     n_validation = int(row.get("n_validation") or 0)
     row["max_hold_sessions"] = int(cell.max_hold_sessions)
-    row["regime_gate"] = str(entry.get("regime_gate") or "GREEN")
+    row["regime_gate"] = str(entry.get("regime_gate") or "OFF")
     row["regime_yellow_frac_min"] = entry.get("regime_yellow_frac_min")
     row["regime_yellow_require_bounce"] = entry.get("regime_yellow_require_bounce")
     row["prior_day_spy_positive"] = bool(entry.get("prior_day_spy_positive", False))
+    row["volume_gate_max_pctile"] = entry.get("volume_gate_max_pctile")
     row["dte_target"] = int(entry.get("dte_target") or COARSE_DTE)
     row["take_profit_pct"] = float(exit_cfg.get("take_profit_pct") or COARSE_TP)
     row["stop_loss_pct"] = float(exit_cfg.get("stop_loss_pct") or COARSE_SL)
+    row["stop_loss_pct_early"] = exit_cfg.get(
+        "stop_loss_pct_early", COARSE_SL_EARLY
+    )
     row["stability_gap"] = round(abs(train_mean - validation_mean), 6)
     full = train + validation + test
     row["full_mean_net_pnl_pct"] = round(_mean_pnl(full), 6)
@@ -714,6 +777,9 @@ def run_stage_a(
                 "coarse_dte": COARSE_DTE,
                 "coarse_tp": COARSE_TP,
                 "coarse_sl": COARSE_SL,
+                "coarse_sl_early": COARSE_SL_EARLY,
+                "coarse_sl_early_minutes": COARSE_SL_EARLY_MINUTES,
+                "volume_gates": [v[1] for v in VOLUME_GATES],
                 "regimes": [r[3] for r in REGIMES],
                 "coarse_to_fine": bool(coarse_to_fine),
             },

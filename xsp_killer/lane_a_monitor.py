@@ -76,6 +76,9 @@ class LaneRules:
     swing_hold: bool = False
     max_hold_dte: int = 0
     max_hold_sessions: int = 0
+    # Nagus: tight 10% SL in the first ~90 minutes, then widen.
+    stop_loss_pct_early: float | None = None
+    stop_loss_early_minutes: int = 90
 
     @classmethod
     def from_yaml(cls, path: Path) -> LaneRules:
@@ -139,6 +142,14 @@ class LaneRules:
             swing_hold=bool(exit_cfg.get("swing_hold", False)),
             max_hold_dte=int(exit_cfg.get("max_hold_dte", 0)),
             max_hold_sessions=max_hold_sessions,
+            stop_loss_pct_early=(
+                float(exit_cfg["stop_loss_pct_early"])
+                if exit_cfg.get("stop_loss_pct_early") is not None
+                else None
+            ),
+            stop_loss_early_minutes=int(
+                exit_cfg.get("stop_loss_early_minutes", 90)
+            ),
         )
 
 
@@ -442,6 +453,10 @@ def regime_gate_allows(
             return True, None
         return False, f"regime {regime} blocks new risk"
 
+    if gate in {"OFF", "NONE", "ALWAYS"}:
+        # Volume (or other) gates decide; regime is not a hard filter.
+        return True, None
+
     if gate == "DIP_BOUNCE":
         # Dip-buy strategy: enter on a confirmed BB bounce regardless of regime.
         # The bounce confirmation (ta_entry_ok) is the safety — we only buy
@@ -680,12 +695,27 @@ def evaluate_exit_alerts(
     wide = position_wide_spread(pos)
     allow_take_profit = not pos.mark_quote_stale and not wide
 
-    if ret_pct is not None and ret_pct <= -rules.stop_loss_pct:
+    # Time-phased SL (Nagus): tight early window, then wider baseline stop.
+    effective_sl = float(rules.stop_loss_pct)
+    entry_ts = _entry_ts_et(pos.entry_ts)
+    if (
+        rules.stop_loss_pct_early is not None
+        and entry_ts is not None
+        and int(rules.stop_loss_early_minutes) > 0
+    ):
+        held_min = (now - entry_ts).total_seconds() / 60.0
+        if held_min <= float(rules.stop_loss_early_minutes):
+            effective_sl = float(rules.stop_loss_pct_early)
+
+    if ret_pct is not None and ret_pct <= -effective_sl:
         alerts.append(
             ExitAlert(
                 position_id=pos.position_id,
                 exit_reason="stop_loss",
-                message=f"Stop loss {ret_pct * 100:.1f}% (limit -{rules.stop_loss_pct * 100:.0f}%)",
+                message=(
+                    f"Stop loss {ret_pct * 100:.1f}% "
+                    f"(limit -{effective_sl * 100:.0f}%)"
+                ),
                 pnl_usd=pnl,
                 pnl_per_contract=pnl_c,
             )

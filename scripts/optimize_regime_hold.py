@@ -307,8 +307,8 @@ def _select_edge_candidate(
 def _stage_a_spec_from_row(row: dict[str, Any]) -> StageASpec:
     """Rebuild a StageASpec from a ranking row (no live YAML keys)."""
     dte = int(row.get("dte_target") or 28)
-    tp = float(row.get("take_profit_pct") or 0.20)
-    sl = float(row.get("stop_loss_pct") or 0.30)
+    tp = float(row.get("take_profit_pct") or 0.30)
+    sl = float(row.get("stop_loss_pct") or 0.20)
     hold = int(row.get("max_hold_sessions") or 1)
     gate = str(row.get("regime_gate") or "GREEN")
     yfrac = row.get("regime_yellow_frac_min")

@@ -47,13 +47,13 @@ def test_stage_a_coarse_grid_is_bounded_and_unique():
         for s in specs
     )
     # Explicit unique regime cells: GREEN once; GYB fracs x bounce
-    assert len(specs) == 90  # 9 regimes × 2 prior × 5 holds
+    assert len(specs) == 30  # 2 regimes × 3 volume × 1 prior × 5 holds
     dtes = {s.overrides["entry"]["dte_target"] for s in specs}
     tps = {s.overrides["exit"]["take_profit_pct"] for s in specs}
     sls = {s.overrides["exit"]["stop_loss_pct"] for s in specs}
-    assert dtes == {28}
-    assert tps == {0.20}
-    assert sls == {0.30}
+    assert dtes == {30}
+    assert tps == {0.30}
+    assert sls == {0.20}
 
 
 def test_stage_a_grid_budget_fails_before_execution():
@@ -75,7 +75,7 @@ def test_stage_a_ranks_holdout_and_labels_fidelity():
     keys = [_rank_key(r, min_trades=1) for r in ranking]
     assert keys == sorted(keys, reverse=True)
     assert all("low_sample" in r for r in ranking)
-    assert len(ranking) == 90
+    assert len(ranking) == 30
     # max_hold_sessions used (not unknown YAML key)
     assert any(
         r.get("max_hold_sessions") in (1, 2, 3, 5, 10) for r in ranking
@@ -85,26 +85,28 @@ def test_stage_a_ranks_holdout_and_labels_fidelity():
 def test_refine_stage_a_preserves_regime_hold_and_budget():
     seed_rows = [
         {
-            "variant_id": "rha_dte28_tp20_sl30_green_p0_h3",
-            "regime_gate": "GREEN",
+            "variant_id": "rha_dte30_tp30_sl20_off_vq33_p0_h3",
+            "regime_gate": "OFF",
+            "volume_gate_max_pctile": 0.33,
             "regime_yellow_frac_min": None,
             "regime_yellow_require_bounce": None,
             "prior_day_spy_positive": False,
             "max_hold_sessions": 3,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
         {
-            "variant_id": "rha_dte28_tp20_sl30_gyb50b0_p1_h5",
-            "regime_gate": "GREEN_OR_YELLOW_BOUNCE",
-            "regime_yellow_frac_min": 0.50,
-            "regime_yellow_require_bounce": False,
-            "prior_day_spy_positive": True,
+            "variant_id": "rha_dte30_tp30_sl20_green_vall_p0_h5",
+            "regime_gate": "GREEN",
+            "volume_gate_max_pctile": None,
+            "regime_yellow_frac_min": None,
+            "regime_yellow_require_bounce": None,
+            "prior_day_spy_positive": False,
             "max_hold_sessions": 5,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
     ]
     existing = {r["variant_id"] for r in seed_rows}
@@ -120,22 +122,22 @@ def test_refine_stage_a_preserves_regime_hold_and_budget():
     dtes = {s.overrides["entry"]["dte_target"] for s in refined}
     tps = {s.overrides["exit"]["take_profit_pct"] for s in refined}
     sls = {s.overrides["exit"]["stop_loss_pct"] for s in refined}
-    assert dtes <= {21, 28, 35}
-    assert tps <= {0.10, 0.15, 0.20, 0.25}
-    assert sls <= {0.20, 0.30, 0.40}
+    assert dtes <= {25, 28, 30}
+    assert tps <= {0.20, 0.30, 0.40, 0.50}
+    assert sls <= {0.15, 0.20, 0.30}
 
-    # Preserve each survivor's regime/prior/hold; only vary DTE/TP/SL
+    # Preserve each survivor's regime/volume/hold; only vary DTE/TP/SL
     for s in refined:
         assert isinstance(s, StageASpec)
         entry = s.overrides["entry"]
         if s.max_hold_sessions == 3:
-            assert entry["regime_gate"] == "GREEN"
+            assert entry["regime_gate"] == "OFF"
+            assert entry.get("volume_gate_max_pctile") == 0.33
             assert entry["prior_day_spy_positive"] is False
         elif s.max_hold_sessions == 5:
-            assert entry["regime_gate"] == "GREEN_OR_YELLOW_BOUNCE"
-            assert entry["regime_yellow_frac_min"] == 0.50
-            assert entry["regime_yellow_require_bounce"] is False
-            assert entry["prior_day_spy_positive"] is True
+            assert entry["regime_gate"] == "GREEN"
+            assert entry.get("volume_gate_max_pctile") is None
+            assert entry["prior_day_spy_positive"] is False
         else:
             raise AssertionError(f"unexpected hold {s.max_hold_sessions}")
 
@@ -149,13 +151,13 @@ def test_refine_stage_a_preserves_regime_hold_and_budget():
             seed_rows,
             existing_ids=set(),
             budget_remaining=500,
-            max_grid=10,
+            max_grid=5,
             allow_large=False,
         )
 
 
 def _twelve_distinct_seeds() -> list[dict]:
-    """12 unique regime/prior/hold seeds (coarse DTE/TP/SL)."""
+    """12 unique regime/volume/hold seeds (coarse DTE/TP/SL)."""
     grid = build_stage_a_grid()
     seeds: list[dict] = []
     seen_keys: set[tuple] = set()
@@ -163,6 +165,7 @@ def _twelve_distinct_seeds() -> list[dict]:
         entry = cell.overrides["entry"]
         key = (
             entry.get("regime_gate"),
+            entry.get("volume_gate_max_pctile"),
             entry.get("regime_yellow_frac_min"),
             entry.get("regime_yellow_require_bounce"),
             entry.get("prior_day_spy_positive"),
@@ -175,13 +178,14 @@ def _twelve_distinct_seeds() -> list[dict]:
             {
                 "variant_id": cell.variant_id,
                 "regime_gate": entry.get("regime_gate"),
+                "volume_gate_max_pctile": entry.get("volume_gate_max_pctile"),
                 "regime_yellow_frac_min": entry.get("regime_yellow_frac_min"),
                 "regime_yellow_require_bounce": entry.get(
                     "regime_yellow_require_bounce"
                 ),
                 "prior_day_spy_positive": entry.get("prior_day_spy_positive"),
                 "max_hold_sessions": cell.max_hold_sessions,
-                "dte_target": entry.get("dte_target", 28),
+                "dte_target": entry.get("dte_target", 30),
                 "take_profit_pct": cell.overrides["exit"]["take_profit_pct"],
                 "stop_loss_pct": cell.overrides["exit"]["stop_loss_pct"],
             }
@@ -195,6 +199,11 @@ def _twelve_distinct_seeds() -> list[dict]:
 def _seed_key_from_row(row: dict) -> tuple:
     return (
         str(row.get("regime_gate") or "").upper(),
+        (
+            None
+            if row.get("volume_gate_max_pctile") is None
+            else round(float(row["volume_gate_max_pctile"]), 4)
+        ),
         (
             None
             if row.get("regime_yellow_frac_min") is None
@@ -214,6 +223,11 @@ def _seed_key_from_cell(cell: StageASpec) -> tuple:
     entry = cell.overrides["entry"]
     return (
         str(entry.get("regime_gate") or "").upper(),
+        (
+            None
+            if entry.get("volume_gate_max_pctile") is None
+            else round(float(entry["volume_gate_max_pctile"]), 4)
+        ),
         (
             None
             if entry.get("regime_yellow_frac_min") is None
@@ -254,11 +268,11 @@ def test_refine_stage_a_round_robin_fairness_twelve_seeds():
         entry = cell.overrides["entry"]
         exit_cfg = cell.overrides["exit"]
         diffs = 0
-        if int(entry["dte_target"]) != 28:
+        if int(entry["dte_target"]) != 30:
             diffs += 1
-        if float(exit_cfg["take_profit_pct"]) != 0.20:
+        if float(exit_cfg["take_profit_pct"]) != 0.30:
             diffs += 1
-        if float(exit_cfg["stop_loss_pct"]) != 0.30:
+        if float(exit_cfg["stop_loss_pct"]) != 0.20:
             diffs += 1
         assert diffs == 1, (
             f"expected one-axis neighbor, got multi-axis {cell.variant_id}"
@@ -566,9 +580,9 @@ def test_stable_windows_require_adjacent_parameter_settings():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
         {
             "variant_id": "b",
@@ -593,9 +607,9 @@ def test_stable_windows_require_adjacent_parameter_settings():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
         {
             "variant_id": "h2",
@@ -604,9 +618,9 @@ def test_stable_windows_require_adjacent_parameter_settings():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
         {
             "variant_id": "h_neg",
@@ -615,9 +629,9 @@ def test_stable_windows_require_adjacent_parameter_settings():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
     ]
     wins = stable_windows(adjacent_holds)
@@ -635,9 +649,9 @@ def test_stable_windows_require_adjacent_parameter_settings():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
         },
         {
             "variant_id": "y",
@@ -668,9 +682,9 @@ def test_behavioral_clones_do_not_form_stability_or_consume_finalist_quota():
         "regime_gate": "GREEN",
         "prior_day_spy_positive": False,
         "regime_yellow_frac_min": None,
-        "dte_target": 28,
-        "take_profit_pct": 0.20,
-        "stop_loss_pct": 0.30,
+        "dte_target": 30,
+        "take_profit_pct": 0.30,
+        "stop_loss_pct": 0.20,
     }
     rows = [
         dict(base, variant_id="original"),
@@ -918,9 +932,9 @@ def test_distinct_adjacent_positive_behaviors_can_form_stability():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
             "regime_yellow_frac_min": None,
-            "dte_target": 28,
-            "take_profit_pct": 0.20,
-            "stop_loss_pct": 0.30,
+            "dte_target": 30,
+            "take_profit_pct": 0.30,
+            "stop_loss_pct": 0.20,
             "behavior_signature": variant,
         }
         for variant, hold in [("a", 1), ("b", 2)]
@@ -1128,7 +1142,7 @@ def test_edge_confirmed_rejects_nonpositive_cross_split(field, value):
 
 def test_recommended_yaml_always_inactive_no_live_text():
     row = {
-        "variant_id": "rha_dte28_tp20_sl30_green_p0_h3",
+        "variant_id": "rha_dte30_tp30_sl20_green_p0_h3",
         "n_holdout": 20,
         "holdout_mean_net_pnl_pct": 0.05,
         "mcpt_pass_5pct": True,
@@ -1142,7 +1156,7 @@ def test_recommended_yaml_always_inactive_no_live_text():
             "regime_gate": "GREEN",
             "prior_day_spy_positive": False,
         },
-        "exit": {"take_profit_pct": 0.20, "stop_loss_pct": 0.30},
+        "exit": {"take_profit_pct": 0.30, "stop_loss_pct": 0.20},
     }
     text = recommended_regime_hold_yaml(row, ov, edge_ok=True, min_trades=8)
     assert "active: false" in text.lower()

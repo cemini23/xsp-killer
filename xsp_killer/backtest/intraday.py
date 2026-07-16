@@ -30,6 +30,10 @@ from xsp_killer.backtest.engine import (
 )
 from xsp_killer.backtest.option_model import synthesize_call_premium
 from xsp_killer.backtest.variants import entry_knobs_from_rules_dict
+from xsp_killer.backtest.volume_gate import (
+    prior_day_volume_percentile,
+    volume_gate_allows,
+)
 from xsp_killer.lane_a_monitor import (
     LaneAPosition,
     LaneRules,
@@ -75,13 +79,39 @@ def _bar_ts_et(idx: Any) -> datetime:
     return ts.to_pydatetime()
 
 
-def in_entry_window(ts: datetime) -> bool:
-    """True for ET weekdays in [15:45, 16:00) when XSP session is open."""
+def _parse_window_time(raw: Any, default: time) -> time:
+    """Parse ``HH:MM`` (or ``HH:MM:SS``) strings; pass through ``time`` objects."""
+    if raw is None:
+        return default
+    if isinstance(raw, time):
+        return raw
+    s = str(raw).strip()
+    if not s:
+        return default
+    parts = s.split(":")
+    if len(parts) < 2:
+        raise ValueError(f"invalid window time {raw!r}; expected HH:MM")
+    return time(int(parts[0]), int(parts[1]))
+
+
+def in_entry_window(
+    ts: datetime,
+    window_start: time | None = None,
+    window_end: time | None = None,
+) -> bool:
+    """True for ET weekdays in [start, end) when XSP session is open.
+
+    Defaults preserve the production close window ``[15:45, 16:00)``.
+    Callers may pass custom ``window_start`` / ``window_end`` for entry-time
+    bucket sweeps without changing live close-window behavior.
+    """
+    start = window_start if window_start is not None else ENTRY_WINDOW_START
+    end = window_end if window_end is not None else ENTRY_WINDOW_END
     now = _to_et(ts)
     if now.weekday() >= 5:
         return False
     t = now.time()
-    if not (ENTRY_WINDOW_START <= t < ENTRY_WINDOW_END):
+    if not (start <= t < end):
         return False
     return xsp_session_open(now) and is_exchange_session(now)
 
@@ -114,10 +144,20 @@ def completed_rth_session_closes(bars: pd.DataFrame) -> list[tuple[date, float]]
     RTH is Mon–Fri 09:30–16:15 ET. Each date's close is the last bar observed
     inside that window (completed session close for that civil date).
     """
+    rows = completed_rth_session_bars(bars)
+    return [(d, close) for d, close, _vol in rows]
+
+
+def completed_rth_session_bars(
+    bars: pd.DataFrame,
+) -> list[tuple[date, float, float]]:
+    """Per RTH civil date: (date, last close, sum volume)."""
     if bars is None or bars.empty:
         return []
     last_close: dict[date, float] = {}
+    vol_sum: dict[date, float] = {}
     order: list[date] = []
+    has_vol = "volume" in bars.columns
     for i, idx in enumerate(bars.index):
         ts = _bar_ts_et(idx)
         if ts.weekday() >= 5:
@@ -128,18 +168,50 @@ def completed_rth_session_closes(bars: pd.DataFrame) -> list[tuple[date, float]]
         d = ts.date()
         if d not in last_close:
             order.append(d)
+            vol_sum[d] = 0.0
         last_close[d] = float(bars.iloc[i]["close"])
-    return [(d, last_close[d]) for d in order]
+        if has_vol:
+            vol_sum[d] += float(bars.iloc[i]["volume"] or 0.0)
+    return [(d, last_close[d], vol_sum.get(d, 0.0)) for d in order]
 
 
 def _daily_context_from_intraday(bars: pd.DataFrame) -> pd.DataFrame:
-    """Build fixture-only daily closes from completed observed RTH sessions."""
-    closes = completed_rth_session_closes(bars)
-    if not closes:
-        return pd.DataFrame(columns=["close"])
+    """Build fixture-only daily closes/volume from completed observed RTH sessions."""
+    rows = completed_rth_session_bars(bars)
+    if not rows:
+        return pd.DataFrame(columns=["close", "volume"])
     return pd.DataFrame(
-        {"close": [close for _, close in closes]},
-        index=pd.DatetimeIndex([pd.Timestamp(day) for day, _ in closes]),
+        {
+            "close": [close for _, close, _ in rows],
+            "volume": [vol for _, _, vol in rows],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp(day) for day, _, _ in rows]),
+    )
+
+
+def _prior_volume_pctile_for_civil_date(
+    daily_context: pd.DataFrame,
+    civil: date,
+    *,
+    lookback: int = 63,
+) -> float | None:
+    """Prior completed day's volume percentile vs trailing lookback."""
+    if daily_context is None or daily_context.empty:
+        return None
+    if "volume" not in daily_context.columns:
+        return None
+    daily = daily_context.sort_index()
+    last_prior_i: int | None = None
+    for k, idx in enumerate(daily.index):
+        if _daily_session_date(idx) < civil:
+            last_prior_i = k
+        else:
+            break
+    if last_prior_i is None:
+        return None
+    # prior_day_volume_percentile reads volumes[bar_i - 1] as the prior day.
+    return prior_day_volume_percentile(
+        daily["volume"], last_prior_i + 1, lookback=lookback
     )
 
 
@@ -336,6 +408,7 @@ class _OpenPos:
     entry_reason: str
     regime_at_entry: str | None
     dte_at_entry: int
+    early_green: bool = False
 
 
 def run_intraday_backtest(
@@ -367,6 +440,16 @@ def run_intraday_backtest(
     ta_rules = TaRules.from_yaml(rules_path)
     econ = PaperEconomics.from_yaml(rules_path)
     premium_scale = econ.premium_scale
+    win_start = _parse_window_time(
+        knobs.get("window_start_et"), ENTRY_WINDOW_START
+    )
+    win_end = _parse_window_time(knobs.get("window_end_et"), ENTRY_WINDOW_END)
+    # Early-green telemetry horizon (analysis only; not a hard gate).
+    early_green_minutes = int(
+        knobs.get("stop_loss_early_minutes")
+        if knobs.get("stop_loss_early_minutes") is not None
+        else 90
+    )
 
     n_bars = len(bars) if bars is not None else 0
     result = BacktestResult(
@@ -375,6 +458,10 @@ def run_intraday_backtest(
     result.notes.append(
         "Stage B 15m replay; exits gated by live xsp_session_open; "
         "premiums modeled (no historical option marks)."
+    )
+    result.notes.append(
+        f"entry_window_et=[{win_start.strftime('%H:%M')},"
+        f"{win_end.strftime('%H:%M')})"
     )
     if bars is None or bars.empty:
         result.notes.append("empty bars")
@@ -438,6 +525,16 @@ def run_intraday_backtest(
                 entry_fill=op.entry_fill, exit_mid=mark, econ=econ
             )
             pos.pnl_usd = pos.pnl_per_contract * pos.quantity
+
+            # Early-green telemetry: any positive mark within the early window.
+            if not op.early_green and early_green_minutes > 0:
+                held_min = (now_et - op.entry_ts).total_seconds() / 60.0
+                if 0 < held_min <= float(early_green_minutes):
+                    mark_ret = pnl_pct(
+                        pos.entry_mid_premium or op.entry_fill, mark
+                    )
+                    if mark_ret is not None and mark_ret > 0:
+                        op.early_green = True
 
             ta_sig = None
             if lane_rules.require_upper_bb_for_take_profit:
@@ -503,6 +600,7 @@ def run_intraday_backtest(
                     entry_reason=op.entry_reason,
                     sessions_held=held_sessions,
                     bar_interval="15m",
+                    early_green=bool(op.early_green),
                 )
             )
         open_book = still_open
@@ -513,7 +611,7 @@ def run_intraday_backtest(
             continue
         if last_entry_date == today:
             continue
-        if not in_entry_window(now_et):
+        if not in_entry_window(now_et, win_start, win_end):
             continue
 
         ta_entry_ok = False
@@ -554,6 +652,19 @@ def run_intraday_backtest(
             if not _prior_day_spy_ok(rth_closes, today):
                 result.n_entries_blocked += 1
                 continue
+
+        vol_pctile = _prior_volume_pctile_for_civil_date(
+            daily_context,
+            today,
+            lookback=int(knobs.get("volume_gate_lookback") or 63),
+        )
+        vol_ok, _vol_reason = volume_gate_allows(
+            prior_vol_pctile=vol_pctile,
+            max_pctile=knobs.get("volume_gate_max_pctile"),
+        )
+        if not vol_ok:
+            result.n_entries_blocked += 1
+            continue
 
         dte_target = _pick_dte(knobs)
         exp = today + timedelta(days=dte_target)

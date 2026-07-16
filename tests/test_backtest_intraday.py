@@ -1094,3 +1094,168 @@ def test_load_bars_still_fail_open_without_key(monkeypatch):
     bars_d, source_d = load_bars(mode="uw", interval="1d")
     assert source_d == "fixture_fallback"
     assert len(bars_d) > 0
+
+
+# ---------------------------------------------------------------------------
+# Task 9: orchestration CLI and reports
+# ---------------------------------------------------------------------------
+
+
+def test_cli_fixture_stage_a_and_b_offline(tmp_path):
+    """Fixture CLI is offline/deterministic; emits JSON+MD with fidelity & safety."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "reports"
+    env = {
+        **os.environ,
+        "UNUSUAL_WHALES_API_KEY": "",
+        "PYTHONUTF8": "1",
+        "XSP_UW_TIPDROP_ROOT": str(tmp_path / "no_tipdrop"),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--mode",
+            "fixture",
+            "--stage-a",
+            "--stage-b",
+            "--min-trades",
+            "1",
+            "--top-k",
+            "2",
+            "--no-coarse-to-fine",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    jsons = list(out.glob("regime_hold_*.json"))
+    mds = list(out.glob("regime_hold_*.md"))
+    assert jsons, "expected timestamped JSON report"
+    assert mds, "expected timestamped Markdown report"
+
+    payload = json.loads(jsons[0].read_text(encoding="utf-8"))
+    assert payload.get("stage_a", {}).get("fidelity") == "daily_close_proxy"
+    stage_b = payload.get("stage_b") or {}
+    assert stage_b.get("fidelity") in (
+        "intraday_15m_session_aware",
+        "15m_session_aware",
+    ) or "15m" in str(stage_b.get("fidelity") or "")
+    assert "coverage" in stage_b or payload.get("intraday_coverage")
+    cov = stage_b.get("coverage") or payload.get("intraday_coverage") or {}
+    assert cov.get("session_phases_observed") == ["RTH"]
+    assert cov.get("has_overnight_bars") is False
+
+    yaml_snip = payload.get("yaml_snippet") or payload.get("recommended_yaml") or ""
+    assert "active: false" in yaml_snip or "active:false" in yaml_snip.replace(" ", "")
+    text_all = jsons[0].read_text(encoding="utf-8") + mds[0].read_text(
+        encoding="utf-8"
+    )
+    low = text_all.lower()
+    assert "live_entries" not in low
+    assert "live_exits" not in low
+    assert "unusual_whales_api_key" not in low
+    # attribution / gates present
+    assert "ranking" in payload.get("stage_a", {}) or "ranking" in payload
+    assert "stable_windows" in payload or "stable_windows" in payload.get(
+        "stage_a", {}
+    )
+
+
+def test_cli_uw_require_uw_fails_without_key_no_report(tmp_path):
+    """--mode uw --require-uw with empty key exits nonzero; no deceptive report."""
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "reports_uw_strict"
+    env = {
+        **os.environ,
+        "UNUSUAL_WHALES_API_KEY": "",
+        "PYTHONUTF8": "1",
+        "XSP_UW_TIPDROP_ROOT": str(tmp_path / "no_tipdrop"),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--mode",
+            "uw",
+            "--require-uw",
+            "--stage-a",
+            "--period",
+            "5y",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert not list(out.glob("*.json")), "must not write fixture-disguised report"
+    assert not list(out.glob("*.md"))
+    combined = (proc.stderr + proc.stdout).lower()
+    assert "unusual_whales_api_key=" not in combined
+    assert "error" in combined or "strict" in combined or "refused" in combined
+    assert "can't open file" not in combined
+    # must not claim a successful write
+    assert "wrote " not in combined
+
+
+def test_cli_help_lists_required_flags():
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--help",
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.returncode == 0, proc.stderr
+    help_text = proc.stdout
+    for flag in (
+        "--mode",
+        "--stage-a",
+        "--stage-b",
+        "--period",
+        "--intraday-period",
+        "--split-frac",
+        "--min-trades",
+        "--top-k",
+        "--mcpt",
+        "--mcpt-perm",
+        "--coarse-to-fine",
+        "--allow-large",
+        "--require-uw",
+        "--min-intraday-bars",
+        "--min-intraday-sessions",
+        "--out",
+    ):
+        assert flag in help_text, f"missing {flag}"

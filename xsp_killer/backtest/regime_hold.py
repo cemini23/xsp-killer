@@ -295,6 +295,25 @@ def _row_seed_fields(
     }
 
 
+def _one_axis_refine_triples(fields: dict[str, Any]) -> list[tuple[int, float, float]]:
+    """Deterministic one-axis adjacent (dte, tp, sl) moves around a seed.
+
+    Order: DTE neighbors, then TP, then SL (each axis lower then higher).
+    Multi-axis Cartesian products are intentionally not generated.
+    """
+    base_dte = int(fields["dte_target"])
+    base_tp = float(fields["take_profit_pct"])
+    base_sl = float(fields["stop_loss_pct"])
+    triples: list[tuple[int, float, float]] = []
+    for nd in _axis_neighbors("dte", base_dte):
+        triples.append((int(nd), base_tp, base_sl))
+    for ntp in _axis_neighbors("tp", base_tp):
+        triples.append((base_dte, float(ntp), base_sl))
+    for nsl in _axis_neighbors("sl", base_sl):
+        triples.append((base_dte, base_tp, float(nsl)))
+    return triples
+
+
 def refine_stage_a(
     seed_rows: list[dict[str, Any]],
     *,
@@ -304,21 +323,21 @@ def refine_stage_a(
     max_grid: int = MAX_GRID_DEFAULT,
     overrides_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> list[StageASpec]:
-    """Refine top survivors over DTE/TP/SL while preserving regime/prior/hold.
+    """Refine top survivors via fair one-axis DTE/TP/SL neighbors.
 
-    Bounded and deduped before any execution. Raises ``GridBudgetError`` if the
-    planned refine batch would exceed ``max_grid`` without ``allow_large``.
+    Allocates neighbors round-robin across seeds so every seed receives a first
+    neighbor before any seed receives a second (when budget >= n_seeds).
+    Preserves regime/prior/hold; dedupes against ``existing_ids`` and within the
+    refine batch. Raises ``GridBudgetError`` if the planned refine batch would
+    exceed ``max_grid`` without ``allow_large``.
     """
     if budget_remaining <= 0 or not seed_rows:
         return []
 
     ov_map = overrides_by_id or {}
-    extra: list[StageASpec] = []
-    seen = set(existing_ids)
-
+    # Per-seed ordered neighbor lists (one-axis only; not full Cartesian).
+    per_seed: list[list[StageASpec]] = []
     for row in seed_rows:
-        if len(extra) >= budget_remaining:
-            break
         vid0 = str(row.get("variant_id") or "")
         fields = _row_seed_fields(row, ov_map.get(vid0))
         gate = fields["regime_gate"]
@@ -334,17 +353,8 @@ def refine_stage_a(
             }
         )
         plabel = "p1" if prior else "p0"
-
-        for dte, tp, sl in product(REFINE_DTE, REFINE_TP, REFINE_SL):
-            if len(extra) >= budget_remaining:
-                break
-            # Skip exact coarse seed (already evaluated)
-            if (
-                int(dte) == int(fields["dte_target"])
-                and float(tp) == float(fields["take_profit_pct"])
-                and float(sl) == float(fields["stop_loss_pct"])
-            ):
-                continue
+        neighbors: list[StageASpec] = []
+        for dte, tp, sl in _one_axis_refine_triples(fields):
             cell = _make_stage_a_spec(
                 dte=int(dte),
                 tp=float(tp),
@@ -357,6 +367,21 @@ def refine_stage_a(
                 prior_label=plabel,
                 hold=int(hold),
             )
+            neighbors.append(cell)
+        per_seed.append(neighbors)
+
+    extra: list[StageASpec] = []
+    seen = set(existing_ids)
+    max_depth = max((len(lst) for lst in per_seed), default=0)
+    for depth in range(max_depth):
+        if len(extra) >= budget_remaining:
+            break
+        for neighbors in per_seed:
+            if len(extra) >= budget_remaining:
+                break
+            if depth >= len(neighbors):
+                continue
+            cell = neighbors[depth]
             if cell.variant_id in seen:
                 continue
             seen.add(cell.variant_id)
@@ -378,11 +403,13 @@ def _enrich_row(
     cell: StageASpec,
     train: list[TradeRow],
     holdout: list[TradeRow],
+    min_trades: int = 8,
 ) -> dict[str, Any]:
     entry = cell.overrides.get("entry") or {}
     exit_cfg = cell.overrides.get("exit") or {}
     train_mean = float(row.get("train_mean_net_pnl_pct") or 0.0)
     hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
+    n_hold = int(row.get("n_holdout") or 0)
     row["max_hold_sessions"] = int(cell.max_hold_sessions)
     row["regime_gate"] = str(entry.get("regime_gate") or "GREEN")
     row["regime_yellow_frac_min"] = entry.get("regime_yellow_frac_min")
@@ -395,16 +422,49 @@ def _enrich_row(
     row["full_mean_net_pnl_pct"] = round(_mean_pnl(train + holdout), 6)
     row["full_median_net_pnl_pct"] = round(_median_pnl(train + holdout), 6)
     row["full_win_pct"] = _win_pct(train + holdout)
+    row["low_sample"] = bool(n_hold < int(min_trades))
     return row
 
 
-def _rank_key(r: dict[str, Any]) -> tuple[float, float, int]:
-    # holdout mean desc, smaller stability gap, more holdout trades
+def _rank_key(
+    r: dict[str, Any], *, min_trades: int = 0
+) -> tuple[int, float, float, float, int]:
+    """Sample-aware rank key (use with reverse=True).
+
+    1. qualified (n_holdout >= min_trades) before low-sample
+    2. holdout mean desc
+    3. train-holdout gap asc (smaller stability_gap better)
+    4. holdout median higher
+    5. holdout sample size
+    """
+    n = int(r.get("n_holdout") or 0)
+    qualified = 1 if n >= int(min_trades) else 0
     return (
+        qualified,
         float(r.get("holdout_mean_net_pnl_pct") or 0.0),
         -float(r.get("stability_gap") or 0.0),
-        int(r.get("n_holdout") or 0),
+        float(r.get("holdout_median_net_pnl_pct") or 0.0),
+        n,
     )
+
+
+def _select_stage_a_finalists(
+    rows: list[dict[str, Any]],
+    *,
+    top_k: int,
+    min_trades: int,
+) -> list[dict[str, Any]]:
+    """Refinement / MCPT finalists: qualified only when any exist.
+
+    Low-sample fallback only if no row meets ``min_trades``; those rows must
+    already carry ``low_sample=True`` (set during enrich/rank).
+    """
+    qualified = [
+        r for r in rows if int(r.get("n_holdout") or 0) >= int(min_trades)
+    ]
+    pool = qualified if qualified else list(rows)
+    k = min(int(top_k), len(pool))
+    return pool[:k]
 
 
 def run_stage_a(
@@ -480,9 +540,11 @@ def run_stage_a(
                 n_entries_blocked=res.n_entries_blocked,
             )
             row["holdout_pnls"] = [t.net_pnl_pct for t in holdout]
-            _enrich_row(row, cell=cell, train=train, holdout=holdout)
+            _enrich_row(
+                row, cell=cell, train=train, holdout=holdout, min_trades=min_trades
+            )
             out.append(row)
-        out.sort(key=_rank_key, reverse=True)
+        out.sort(key=lambda r: _rank_key(r, min_trades=min_trades), reverse=True)
         return out
 
     try:
@@ -490,8 +552,9 @@ def run_stage_a(
         rows = _rows_from_results()
 
         if coarse_to_fine and rows:
-            k_seed = min(int(top_k), len(rows))
-            seed_rows = rows[:k_seed]
+            seed_rows = _select_stage_a_finalists(
+                rows, top_k=top_k, min_trades=min_trades
+            )
             existing = set(results_by_id.keys())
             budget_left = max(0, int(max_grid) - len(existing))
             if allow_large:
@@ -519,10 +582,14 @@ def run_stage_a(
                 _run_cells(neighbors)
                 rows = _rows_from_results()
 
-        # MCPT only on top finalists when enabled
-        mcpt_budget = min(int(top_k), len(rows))
-        for i, row in enumerate(rows):
-            if run_mcpt and i < mcpt_budget:
+        # MCPT only on sample-aware finalists when enabled
+        finalists = _select_stage_a_finalists(
+            rows, top_k=top_k, min_trades=min_trades
+        )
+        finalist_ids = {str(r.get("variant_id") or "") for r in finalists}
+        mcpt_budget = len(finalists) if run_mcpt else 0
+        for row in rows:
+            if run_mcpt and str(row.get("variant_id") or "") in finalist_ids:
                 pnls = row.get("holdout_pnls") or []
                 m = mcpt(pnls, n_perm=int(n_perm))
                 row["mcpt"] = m
@@ -609,7 +676,14 @@ def run_sensitivity(
     max_hold_sessions: int | None = None,
     tmp_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """IV × slippage matrix; scale temporary paper economics only."""
+    """IV × slippage matrix; scale temporary paper economics only.
+
+    Cost note / private-helper debt: each cell rewrites a temp rules YAML and
+    re-runs the full backtest. A future pass could cache prepared bars/rules and
+    factor PE scaling into a pure helper; out of scope here (bounded matrix only).
+    Temp dirs are cleaned in ``finally``; base rules and seed overrides are never
+    mutated.
+    """
     cell = _as_stage_a_spec(spec, max_hold_sessions=max_hold_sessions)
     base_pe = _base_paper_economics()
     cache_dir = tmp_dir
@@ -682,7 +756,8 @@ def run_sensitivity(
     }
     iv_positive_count = sum(1 for c in iv_at_1x.values() if c["positive"])
 
-    # 1.5× slippage at baseline IV 0.18 if present, else any 1.5× with majority
+    # 1.5× slippage: prefer baseline IV 0.18 when present; else majority across
+    # all 1.5× cells (positives/total strict majority, e.g. 2 of 3 => pass).
     slip_15 = [
         c
         for c in cells_out
@@ -690,8 +765,14 @@ def run_sensitivity(
         and abs(float(c["iv_seed"]) - 0.18) < 1e-9
     ]
     if not slip_15:
-        slip_15 = [c for c in cells_out if abs(float(c["slippage_mult"]) - 1.5) < 1e-9]
-    slip_15_pos = bool(slip_15 and all(c["positive"] for c in slip_15[:1]))
+        slip_15 = [
+            c for c in cells_out if abs(float(c["slippage_mult"]) - 1.5) < 1e-9
+        ]
+    if not slip_15:
+        slip_15_pos = False
+    else:
+        n_pos = sum(1 for c in slip_15 if c["positive"])
+        slip_15_pos = bool(n_pos * 2 > len(slip_15))
 
     return {
         "variant_id": cell.variant_id,

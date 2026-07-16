@@ -150,33 +150,34 @@ def test_entry_window_rejects_weekends_and_closed_session():
 
 
 def test_session_date_order_only_includes_session_open_dates():
-    """Friday + closed Sat afternoon + Sunday evening + Monday → open dates only."""
+    """Open bars only; Sun 20:15 + Mon morning share Monday exchange session key."""
     from xsp_killer.backtest.intraday import session_date_order
 
     stamps = [
-        et(2024, 6, 14, 15, 45),  # Fri RTH
+        et(2024, 6, 14, 15, 45),  # Fri RTH → Friday key
         et(2024, 6, 15, 14, 0),  # Sat afternoon CLOSED
         et(2024, 6, 16, 12, 0),  # Sun daytime CLOSED
-        et(2024, 6, 16, 20, 15),  # Sun GTH reopen OPEN
-        et(2024, 6, 17, 10, 0),  # Mon RTH OPEN
+        et(2024, 6, 16, 20, 15),  # Sun GTH reopen → Monday key
+        et(2024, 6, 17, 10, 0),  # Mon RTH → Monday key
     ]
     bars = _bars_from_timestamps(stamps)
     ordered = session_date_order(bars)
     assert ordered == [
         date(2024, 6, 14),
-        date(2024, 6, 16),
         date(2024, 6, 17),
     ]
     assert date(2024, 6, 15) not in ordered  # Sat closed bars only
+    assert date(2024, 6, 16) not in ordered  # Sun civil date is not the key
 
 
 def test_session_date_order_includes_saturday_gth_tail_when_observed():
+    """Fri RTH + Sat GTH tail are distinct; Fri 20:15 would share Sat key."""
     from xsp_killer.backtest.intraday import session_date_order
 
     stamps = [
-        et(2024, 6, 14, 15, 45),  # Fri
-        et(2024, 6, 15, 8, 0),  # Sat GTH tail OPEN
-        et(2024, 6, 17, 10, 0),  # Mon
+        et(2024, 6, 14, 15, 45),  # Fri RTH → Friday
+        et(2024, 6, 15, 8, 0),  # Sat GTH tail OPEN → Saturday
+        et(2024, 6, 17, 10, 0),  # Mon → Monday
     ]
     ordered = session_date_order(_bars_from_timestamps(stamps))
     assert ordered == [
@@ -187,7 +188,7 @@ def test_session_date_order_includes_saturday_gth_tail_when_observed():
 
 
 def test_trading_sessions_held_uses_observed_order_not_calendar():
-    """Friday entry → hold count 1 on next ordered trading date, not +1 calendar day."""
+    """Friday entry → next observed exchange session is Mon (Sun+Mon share key)."""
     from xsp_killer.backtest.intraday import (
         session_date_order,
         trading_sessions_held,
@@ -196,8 +197,8 @@ def test_trading_sessions_held_uses_observed_order_not_calendar():
     stamps = [
         et(2024, 6, 14, 15, 45),  # Fri
         et(2024, 6, 15, 14, 0),  # Sat closed (not a session date)
-        et(2024, 6, 16, 20, 15),  # Sun reopen
-        et(2024, 6, 17, 10, 0),  # Mon
+        et(2024, 6, 16, 20, 15),  # Sun reopen → Monday session
+        et(2024, 6, 17, 10, 0),  # Mon morning → same Monday session
     ]
     bars = _bars_from_timestamps(stamps)
     session_dates = session_date_order(bars)
@@ -206,16 +207,15 @@ def test_trading_sessions_held_uses_observed_order_not_calendar():
     # Same session date still held 0
     assert trading_sessions_held(entry, et(2024, 6, 14, 16, 0), session_dates) == 0
 
-    # Saturday closed is not a session date — calendar +1 must NOT count as 1
-    # when we measure on the next observed open date (Sunday reopen)
+    # Saturday closed is not a session date — calendar +1 must NOT count
+    # Sun reopen and Mon morning share one exchange session key
     assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15), session_dates) == 1
-    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0), session_dates) == 2
+    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0), session_dates) == 1
 
     # Pure calendar subtraction Fri→Sat would be 1; observed order skips Sat
     calendar_days = (date(2024, 6, 15) - date(2024, 6, 14)).days
     assert calendar_days == 1
-    # Sat is not in session_dates, so hold is measured on next open (Sun) as 1
-    assert session_dates[1] == date(2024, 6, 16)
+    assert session_dates == [date(2024, 6, 14), date(2024, 6, 17)]
 
 
 # ---------------------------------------------------------------------------
@@ -227,14 +227,16 @@ def test_one_entry_per_et_date_even_with_two_close_window_bars(tmp_path):
     """At most one new entry per ET date even if 15:45 and 15:59 both present."""
     from xsp_killer.backtest.intraday import run_intraday_backtest
 
-    warm, stamps = _green_warmup_days(6, start=date(2024, 6, 3))
-    # Duplicate close-window on last day: add 15:59 alongside existing 15:45
-    last_day = stamps[-1].date()
-    extra = et(last_day.year, last_day.month, last_day.day, 15, 59)
+    warm, stamps = _green_warmup_days(8, start=date(2024, 6, 3))
+    # Duplicate close-window on a mid day: add 15:59 alongside existing 15:45
+    # Pick a day with room after so hold_cap can close trades
+    mid = stamps[len(stamps) // 2]
+    mid_day = mid.date()
+    extra = et(mid_day.year, mid_day.month, mid_day.day, 15, 59)
+    # Use last warm close for simple append price
     px = float(warm.iloc[-1]["close"]) + 0.25
     extra_df = pd.DataFrame([_ohlc_row(extra, px)]).set_index("ts")
     bars = pd.concat([warm, extra_df]).sort_index()
-    # Drop any accidental duplicate index
     bars = bars[~bars.index.duplicated(keep="first")]
 
     rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
@@ -244,16 +246,16 @@ def test_one_entry_per_et_date_even_with_two_close_window_bars(tmp_path):
         variant_id="one_entry",
         iv_seed=0.18,
         source="fixture",
-        max_hold_sessions=None,
+        max_hold_sessions=1,
     )
     entries_by_date: dict[date, int] = {}
     for t in res.trades:
         ed = datetime.fromisoformat(t.entry_ts).astimezone(ET).date()
         entries_by_date[ed] = entries_by_date.get(ed, 0) + 1
-    # Also count residual open that became end_of_series
     assert res.trades, "expected at least one trade on green path"
     assert all(c == 1 for c in entries_by_date.values()), entries_by_date
     assert all(t.bar_interval == "15m" for t in res.trades)
+    assert all(t.exit_reason != "end_of_series" for t in res.trades)
 
 
 @pytest.mark.parametrize(
@@ -482,3 +484,513 @@ def test_trade_rows_use_15m_and_sessions_held(tmp_path):
         assert t.bar_interval == "15m"
         assert isinstance(t.sessions_held, int)
         assert t.sessions_held >= 0
+
+
+# ---------------------------------------------------------------------------
+# Stage B quality review: forced exits, prior-day, residual, session keys, TZ
+# ---------------------------------------------------------------------------
+
+
+def test_exchange_session_key_maps_gth_evening_to_next_calendar_date():
+    from xsp_killer.backtest.intraday import exchange_session_key
+
+    # Sun 20:15 → Monday; Mon morning civil Monday → same key
+    assert exchange_session_key(et(2024, 6, 16, 20, 15)) == date(2024, 6, 17)
+    assert exchange_session_key(et(2024, 6, 17, 9, 0)) == date(2024, 6, 17)
+    assert exchange_session_key(et(2024, 6, 17, 10, 0)) == date(2024, 6, 17)
+
+    # Fri 20:15 → Saturday; Sat GTH tail civil Saturday → same key
+    assert exchange_session_key(et(2024, 6, 14, 20, 15)) == date(2024, 6, 15)
+    assert exchange_session_key(et(2024, 6, 15, 8, 0)) == date(2024, 6, 15)
+
+    # RTH / curb use civil date
+    assert exchange_session_key(et(2024, 6, 14, 15, 45)) == date(2024, 6, 14)
+    assert exchange_session_key(et(2024, 6, 14, 16, 45)) == date(2024, 6, 14)
+
+
+def test_session_date_order_sunday_reopen_and_monday_share_one_key():
+    from xsp_killer.backtest.intraday import session_date_order
+
+    stamps = [
+        et(2024, 6, 16, 20, 15),  # Sun reopen
+        et(2024, 6, 17, 8, 0),  # Mon GTH
+        et(2024, 6, 17, 10, 0),  # Mon RTH
+    ]
+    ordered = session_date_order(_bars_from_timestamps(stamps))
+    assert ordered == [date(2024, 6, 17)]
+
+
+def test_session_date_order_friday_evening_and_saturday_tail_share_one_key():
+    from xsp_killer.backtest.intraday import session_date_order
+
+    stamps = [
+        et(2024, 6, 14, 20, 15),  # Fri evening GTH
+        et(2024, 6, 15, 8, 0),  # Sat GTH tail
+    ]
+    ordered = session_date_order(_bars_from_timestamps(stamps))
+    assert ordered == [date(2024, 6, 15)]
+
+
+def test_hold_counts_sunday_reopen_and_monday_as_one_session():
+    from xsp_killer.backtest.intraday import (
+        session_date_order,
+        trading_sessions_held,
+    )
+
+    stamps = [
+        et(2024, 6, 13, 15, 45),  # Thu
+        et(2024, 6, 14, 15, 45),  # Fri
+        et(2024, 6, 16, 20, 15),  # Sun reopen → Mon key
+        et(2024, 6, 17, 10, 0),  # Mon morning → Mon key
+    ]
+    sess = session_date_order(_bars_from_timestamps(stamps))
+    entry = et(2024, 6, 14, 15, 45)
+    assert trading_sessions_held(entry, et(2024, 6, 16, 20, 15), sess) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 17, 10, 0), sess) == 1
+
+
+def test_hold_counts_friday_evening_and_saturday_tail_as_one_session():
+    from xsp_killer.backtest.intraday import (
+        session_date_order,
+        trading_sessions_held,
+    )
+
+    stamps = [
+        et(2024, 6, 14, 15, 45),  # Fri RTH entry session
+        et(2024, 6, 14, 20, 15),  # Fri evening → Sat key
+        et(2024, 6, 15, 8, 0),  # Sat tail → Sat key
+    ]
+    sess = session_date_order(_bars_from_timestamps(stamps))
+    entry = et(2024, 6, 14, 15, 45)
+    assert trading_sessions_held(entry, et(2024, 6, 14, 20, 15), sess) == 1
+    assert trading_sessions_held(entry, et(2024, 6, 15, 8, 0), sess) == 1
+
+
+def test_time_stop_requires_session_open_not_gap_or_weekend(tmp_path):
+    """dte<=0 force exit only when session open (not gap/weekend closed)."""
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    warm, _ = _green_warmup_days(6, start=date(2024, 6, 3))
+    last_px = float(warm.iloc[-1]["close"])
+    # dte_target=0 so expiry force path is live on subsequent bars
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        dte_target=0,
+    )
+
+    last_day = warm.index[-1]
+    if hasattr(last_day, "to_pydatetime"):
+        last_et = last_day.to_pydatetime()
+    else:
+        last_et = last_day
+    if getattr(last_et, "tzinfo", None) is None:
+        last_et = last_et.replace(tzinfo=ET)
+    else:
+        last_et = last_et.astimezone(ET)
+    d = last_et.date()
+    # Next weekday for open-session liquidation target
+    nxt = d + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+
+    gap_rows = [
+        _ohlc_row(et(nxt.year, nxt.month, nxt.day, 9, 27), last_px),
+        _ohlc_row(et(nxt.year, nxt.month, nxt.day, 18, 0), last_px),
+        _ohlc_row(et(nxt.year, nxt.month, nxt.day, 10, 0), last_px),
+    ]
+    # Weekend closed bar must never host time_stop
+    sat = nxt + timedelta(days=(5 - nxt.weekday()) % 7)
+    if sat == nxt:
+        sat = nxt + timedelta(days=7)
+    gap_rows.append(_ohlc_row(et(sat.year, sat.month, sat.day, 14, 0), last_px))
+
+    bars = pd.concat(
+        [warm, pd.DataFrame(gap_rows).set_index("ts")]
+    ).sort_index()
+    bars = bars[~bars.index.duplicated(keep="first")]
+
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="ts_session",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=None,
+    )
+    time_stops = [t for t in res.trades if t.exit_reason == "time_stop"]
+    reasons = [t.exit_reason for t in res.trades]
+    assert time_stops, f"expected time_stop on open bar, got {reasons}"
+    for t in time_stops:
+        exit_ts = datetime.fromisoformat(t.exit_ts)
+        assert xsp_session_open(exit_ts), t.exit_ts
+        if exit_ts.tzinfo:
+            et_x = exit_ts.astimezone(ET)
+        else:
+            et_x = exit_ts.replace(tzinfo=ET)
+        assert not (et_x.hour == 9 and 25 <= et_x.minute < 30)
+        assert not (et_x.hour >= 17 and et_x.hour < 20)
+        assert not (et_x.hour == 20 and et_x.minute < 15)
+        assert not (et_x.weekday() == 5 and et_x.hour >= 10)
+
+
+def test_hold_cap_requires_session_open_not_gap(tmp_path):
+    """hold_cap must not fire in 09:25–09:30 / 17:00–20:15 gaps."""
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    warm, _ = _green_warmup_days(5, start=date(2024, 6, 3))
+    last_px = float(warm.iloc[-1]["close"])
+    # After Fri 6/7 entry, next session Mon 6/10 — inject Mon gap then open
+    gap_rows = [
+        _ohlc_row(et(2024, 6, 10, 9, 27), last_px),
+        _ohlc_row(et(2024, 6, 10, 18, 0), last_px),
+        _ohlc_row(et(2024, 6, 10, 10, 0), last_px),
+        _ohlc_row(et(2024, 6, 11, 10, 0), last_px),
+    ]
+    bars = pd.concat(
+        [warm, pd.DataFrame(gap_rows).set_index("ts")]
+    ).sort_index()
+
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="hold_gap",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=1,
+    )
+    capped = [t for t in res.trades if t.exit_reason == "hold_cap"]
+    assert capped, f"expected hold_cap, got {[t.exit_reason for t in res.trades]}"
+    for t in capped:
+        exit_ts = datetime.fromisoformat(t.exit_ts)
+        assert xsp_session_open(exit_ts), t.exit_ts
+
+
+def test_exit_precedence_strategy_alert_over_time_stop_over_hold_cap(
+    tmp_path, monkeypatch
+):
+    """On open bars: strategy alert > dte time_stop > hold_cap."""
+    from xsp_killer.backtest import intraday as intrad
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+    from xsp_killer.lane_a_monitor import ExitAlert
+
+    warm, _ = _green_warmup_days(6, start=date(2024, 6, 3))
+    last_px = float(warm.iloc[-1]["close"])
+    extra = _bars_from_timestamps(
+        _rth_15m_day(date(2024, 6, 10)) + _rth_15m_day(date(2024, 6, 11)),
+        start_px=last_px + 0.25,
+        step=0.1,
+    )
+    bars = pd.concat([warm, extra]).sort_index()
+
+    def always_sl(pos, rules, *, now_et=None, ta_signal=None, **kw):
+        if now_et is None or not xsp_session_open(now_et):
+            return []
+        if pos.dte is not None and pos.dte <= 0:
+            # Would be time_stop territory; still strategy wins
+            return [
+                ExitAlert(
+                    position_id=pos.position_id,
+                    exit_reason="stop_loss",
+                    message="forced SL for precedence",
+                    pnl_usd=pos.pnl_usd,
+                    pnl_per_contract=pos.pnl_per_contract,
+                )
+            ]
+        return []
+
+    monkeypatch.setattr(intrad, "evaluate_exit_alerts", always_sl)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        dte_target=0,
+    )
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="prec",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=1,
+    )
+    assert res.trades
+    # First exit after dte hits 0 should be strategy stop_loss, not time_stop/hold_cap
+    reasons = {t.exit_reason for t in res.trades}
+    assert "stop_loss" in reasons
+    assert "time_stop" not in reasons
+
+
+def test_prior_day_spy_positive_uses_completed_rth_closes_not_adjacent_bars(tmp_path):
+    """Gate compares completed RTH session closes, not adjacent 15m bars."""
+    from xsp_killer.backtest.intraday import (
+        completed_rth_session_closes,
+        run_intraday_backtest,
+    )
+
+    # Build 6 green RTH days then a red RTH day (session close down) then entry day
+    # with rising 15m bars so adjacent-bar logic would incorrectly pass.
+    stamps: list[datetime] = []
+    d = date(2024, 6, 3)  # Mon
+    while len({s.date() for s in stamps}) < 6:
+        if d.weekday() < 5:
+            stamps.extend(_rth_15m_day(d))
+        d += timedelta(days=1)
+    # Day 7: red day — last RTH close well below prior day close
+    red_day = d
+    while red_day.weekday() >= 5:
+        red_day += timedelta(days=1)
+    red_stamps = _rth_15m_day(red_day)
+    # Day 8: entry day with mild uptrend 15m bars
+    entry_day = red_day + timedelta(days=1)
+    while entry_day.weekday() >= 5:
+        entry_day += timedelta(days=1)
+    entry_stamps = _rth_15m_day(entry_day)
+
+    # Warmup green uptrend
+    warm = _bars_from_timestamps(stamps, start_px=400.0, step=0.25)
+    prior_close = float(warm.iloc[-1]["close"])
+    # Red day: drop hard so last RTH close < prior completed close
+    red_rows = []
+    for i, ts in enumerate(red_stamps):
+        px = prior_close - 5.0 - i * 0.1
+        red_rows.append(_ohlc_row(ts, px))
+    red_df = pd.DataFrame(red_rows).set_index("ts")
+    red_close = float(red_df.iloc[-1]["close"])
+    assert red_close < prior_close
+
+    # Entry day: 15m rising from red_close (adjacent bars green) but prior session red
+    ent_rows = []
+    for i, ts in enumerate(entry_stamps):
+        ent_rows.append(_ohlc_row(ts, red_close + 0.5 + i * 0.2))
+    ent_df = pd.DataFrame(ent_rows).set_index("ts")
+    bars = pd.concat([warm, red_df, ent_df]).sort_index()
+
+    closes = completed_rth_session_closes(bars)
+    assert len(closes) >= 2
+    # Last two completed before entry day: red vs green
+    before_entry = [(dt, px) for dt, px in closes if dt < entry_day]
+    assert len(before_entry) >= 2
+    assert before_entry[-1][1] < before_entry[-2][1]
+
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    # Enable prior_day_spy_positive
+    text = rules.read_text(encoding="utf-8")
+    rules.write_text(
+        text.replace("prior_day_spy_positive: false", "prior_day_spy_positive: true"),
+        encoding="utf-8",
+    )
+
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="prior_red",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=1,
+    )
+    # No entries on entry_day (blocked by prior red RTH session)
+    entry_day_trades = [
+        t
+        for t in res.trades
+        if datetime.fromisoformat(t.entry_ts).astimezone(ET).date() == entry_day
+    ]
+    assert entry_day_trades == []
+    assert res.n_entries_blocked >= 1
+
+
+def test_prior_day_spy_positive_allows_when_prior_rth_session_green(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars, _ = _green_warmup_days(8, start=date(2024, 6, 3), step=0.3)
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    text = rules.read_text(encoding="utf-8")
+    rules.write_text(
+        text.replace("prior_day_spy_positive: false", "prior_day_spy_positive: true"),
+        encoding="utf-8",
+    )
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="prior_green",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=2,
+    )
+    assert res.trades, "green RTH sessions should allow prior_day_spy_positive entries"
+
+
+def test_prior_day_spy_positive_blocks_with_fewer_than_two_completed_sessions(
+    tmp_path,
+):
+    from xsp_killer.backtest.intraday import (
+        completed_rth_session_closes,
+        run_intraday_backtest,
+    )
+
+    # Only one full RTH day — cannot evaluate prior-day green
+    stamps = _rth_15m_day(date(2024, 6, 3)) + _rth_15m_day(date(2024, 6, 4))
+    bars = _bars_from_timestamps(stamps, start_px=400.0, step=0.5)
+    # At first entry-eligible bar we may have only 1 completed session
+    closes = completed_rth_session_closes(bars)
+    assert len(closes) == 2  # two calendar days present overall
+
+    rules = _rules(tmp_path)
+    text = rules.read_text(encoding="utf-8")
+    rules.write_text(
+        text.replace("prior_day_spy_positive: false", "prior_day_spy_positive: true"),
+        encoding="utf-8",
+    )
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="prior_short",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=None,
+    )
+    # Warmup also blocks, but gate must not enter with <2 completed sessions before day
+    assert res.trades == []
+
+
+def test_no_residual_end_of_series_liquidation(tmp_path):
+    """Never realize open positions solely because the series ended."""
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars, _ = _green_warmup_days(6, start=date(2024, 6, 3))
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="residual",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=None,
+    )
+    assert all(t.exit_reason != "end_of_series" for t in res.trades)
+    residual_notes = [n for n in res.notes if "residual" in n.lower()]
+    assert residual_notes, f"expected residual note, got {res.notes}"
+
+
+def test_final_bar_entry_cannot_produce_same_ts_end_of_series(tmp_path):
+    """Entry on last bar must not fabricate same-timestamp end_of_series exit."""
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    bars, _ = _green_warmup_days(6, start=date(2024, 6, 3))
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="final_entry",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=None,
+    )
+    for t in res.trades:
+        assert not (
+            t.exit_reason == "end_of_series" and t.entry_ts == t.exit_ts
+        ), t
+    # Last bar is 15:45 entry window — position may remain open as residual
+    last_ts = bars.index[-1]
+    last_et = (
+        last_ts.to_pydatetime()
+        if hasattr(last_ts, "to_pydatetime")
+        else last_ts
+    )
+    if getattr(last_et, "tzinfo", None) is None:
+        last_et = last_et.replace(tzinfo=ET)
+    else:
+        last_et = last_et.astimezone(ET)
+    assert last_et.hour == 15 and last_et.minute == 45
+    same_ts_exits = [
+        t
+        for t in res.trades
+        if t.entry_ts == t.exit_ts and t.exit_reason == "end_of_series"
+    ]
+    assert same_ts_exits == []
+
+
+def test_off_session_final_bar_cannot_liquidate(tmp_path):
+    """Closed final bar must not liquidate residual opens."""
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    warm, _ = _green_warmup_days(6, start=date(2024, 6, 3))
+    last_px = float(warm.iloc[-1]["close"])
+    # Append Saturday closed afternoon as final bar
+    sat = pd.DataFrame(
+        [_ohlc_row(et(2024, 6, 8, 14, 0), last_px)]
+    ).set_index("ts")
+    bars = pd.concat([warm, sat]).sort_index()
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="off_final",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=None,
+    )
+    for t in res.trades:
+        exit_ts = datetime.fromisoformat(t.exit_ts).astimezone(ET)
+        assert not (
+            exit_ts.date() == date(2024, 6, 8) and t.exit_reason == "end_of_series"
+        )
+    assert all(t.exit_reason != "end_of_series" for t in res.trades)
+    assert any("residual" in n.lower() for n in res.notes)
+
+
+def test_utc_indexed_bars_convert_to_et_for_session_and_entry(tmp_path):
+    """UTC-indexed bars must convert to ET for windows, session keys, and exits."""
+    from xsp_killer.backtest.intraday import (
+        in_entry_window,
+        run_intraday_backtest,
+        session_date_order,
+    )
+
+    utc = ZoneInfo("UTC")
+    # 15:45 ET = 19:45 UTC on a weekday
+    stamps_et = _rth_15m_day(date(2024, 6, 3))
+    for _ in range(5):
+        d = stamps_et[-1].date() + timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        stamps_et.extend(_rth_15m_day(d))
+
+    rows = []
+    for i, ts_et in enumerate(stamps_et):
+        ts_utc = ts_et.astimezone(utc)
+        rows.append(
+            {
+                "ts": ts_utc,
+                "open": 400 + i * 0.25,
+                "high": 400.1 + i * 0.25,
+                "low": 399.9 + i * 0.25,
+                "close": 400 + i * 0.25,
+                "volume": 1_500_000.0,
+            }
+        )
+    bars = pd.DataFrame(rows).set_index("ts")
+
+    # Entry window still true for the UTC stamp that is 15:45 ET
+    sample_1545_utc = et(2024, 6, 3, 15, 45).astimezone(utc)
+    assert in_entry_window(sample_1545_utc)
+
+    ordered = session_date_order(bars)
+    assert date(2024, 6, 3) in ordered
+
+    rules = _rules(tmp_path, take_profit_pct=0.90, stop_loss_pct=0.90)
+    res = run_intraday_backtest(
+        bars,
+        rules,
+        variant_id="utc_bars",
+        iv_seed=0.18,
+        source="fixture",
+        max_hold_sessions=2,
+    )
+    assert res.trades
+    for t in res.trades:
+        entry_et = datetime.fromisoformat(t.entry_ts).astimezone(ET)
+        assert entry_et.hour == 15 and entry_et.minute >= 45
+        assert t.bar_interval == "15m"

@@ -2,6 +2,8 @@
 
 Entries only in the ET close window [15:45, 16:00). Exits and hold caps
 delegate session truth to live ``xsp_session_open`` — no re-derived hours.
+Exchange session keys map GTH evening (>=20:15 ET) to the next calendar date
+so Sunday reopen and Monday morning share one hold session.
 """
 
 from __future__ import annotations
@@ -50,6 +52,9 @@ logger = logging.getLogger("xsp_killer.backtest.intraday")
 ET = ZoneInfo("America/New_York")
 ENTRY_WINDOW_START = time(15, 45)
 ENTRY_WINDOW_END = time(16, 0)
+RTH_START = time(9, 30)
+RTH_END = time(16, 15)
+GTH_EVENING_START = time(20, 15)
 
 
 def _to_et(ts: datetime) -> datetime:
@@ -65,6 +70,19 @@ def _bar_ts_et(idx: Any) -> datetime:
     else:
         ts = ts.tz_convert(ET)
     return ts.to_pydatetime()
+
+
+def exchange_session_key(ts: datetime) -> date:
+    """Exchange trading-session key for hold counting.
+
+    Timestamps >= 20:15 ET map to the next calendar date (Sunday 20:15 and
+    Monday morning share Monday; Friday 20:15 and Saturday GTH tail share
+    Saturday). Timestamps at or before the curb close use the civil ET date.
+    """
+    now = _to_et(ts)
+    if now.time() >= GTH_EVENING_START:
+        return (now + timedelta(days=1)).date()
+    return now.date()
 
 
 def in_entry_window(ts: datetime) -> bool:
@@ -84,7 +102,7 @@ def exit_session_open(ts: datetime) -> bool:
 
 
 def session_date_order(bars: pd.DataFrame) -> list[date]:
-    """Ordered distinct ET dates that have at least one session-open bar."""
+    """Unique ordered exchange session keys for ``xsp_session_open`` bars only."""
     if bars is None or bars.empty:
         return []
     seen: list[date] = []
@@ -93,10 +111,10 @@ def session_date_order(bars: pd.DataFrame) -> list[date]:
         ts = _bar_ts_et(idx)
         if not xsp_session_open(ts):
             continue
-        d = ts.date()
-        if d not in seen_set:
-            seen_set.add(d)
-            seen.append(d)
+        key = exchange_session_key(ts)
+        if key not in seen_set:
+            seen_set.add(key)
+            seen.append(key)
     return seen
 
 
@@ -105,17 +123,54 @@ def trading_sessions_held(
     now_ts: datetime,
     session_dates: list[date],
 ) -> int:
-    """Index distance on observed session dates (not calendar-day subtraction)."""
+    """Index distance on observed exchange session keys (not civil-day math)."""
     if not session_dates:
         return 0
-    entry_d = _to_et(entry_ts).date()
-    now_d = _to_et(now_ts).date()
+    entry_d = exchange_session_key(entry_ts)
+    now_d = exchange_session_key(now_ts)
     try:
         i_entry = session_dates.index(entry_d)
         i_now = session_dates.index(now_d)
     except ValueError:
         return 0
     return max(0, i_now - i_entry)
+
+
+def completed_rth_session_closes(bars: pd.DataFrame) -> list[tuple[date, float]]:
+    """Last observed RTH close per civil ET weekday date, ordered by date.
+
+    RTH is Mon–Fri 09:30–16:15 ET. Each date's close is the last bar observed
+    inside that window (completed session close for that civil date).
+    """
+    if bars is None or bars.empty:
+        return []
+    last_close: dict[date, float] = {}
+    order: list[date] = []
+    for i, idx in enumerate(bars.index):
+        ts = _bar_ts_et(idx)
+        if ts.weekday() >= 5:
+            continue
+        t = ts.time()
+        if not (RTH_START <= t <= RTH_END):
+            continue
+        d = ts.date()
+        if d not in last_close:
+            order.append(d)
+        last_close[d] = float(bars.iloc[i]["close"])
+    return [(d, last_close[d]) for d in order]
+
+
+def _prior_day_spy_ok(
+    completed_closes: list[tuple[date, float]],
+    entry_civil_date: date,
+) -> bool:
+    """Require previous completed RTH close > the completed close before it."""
+    prior = [(d, px) for d, px in completed_closes if d < entry_civil_date]
+    if len(prior) < 2:
+        return False
+    prev_close = prior[-1][1]
+    prev2_close = prior[-2][1]
+    return prev_close > prev2_close
 
 
 def bar_coverage(bars: pd.DataFrame) -> dict[str, Any]:
@@ -229,6 +284,7 @@ def run_intraday_backtest(
         return result
 
     session_dates = session_date_order(bars)
+    rth_closes = completed_rth_session_closes(bars)
     closes = bars["close"].astype(float)
     regime_df = _regime_series(closes)
 
@@ -282,26 +338,26 @@ def run_intraday_backtest(
                 if ei is not None:
                     ta_sig = _ta_signal_at(enriched, ei, ta_rules)
 
-            # evaluate_exit_alerts applies xsp_session_open internally
+            # Strategy alerts already require xsp_session_open internally.
             alerts = evaluate_exit_alerts(
                 pos, lane_rules, now_et=now_et, ta_signal=ta_sig
             )
-            force_reason = None
-            if dte <= 0:
-                force_reason = "time_stop"
 
             held_sessions = trading_sessions_held(
                 op.entry_ts, now_et, session_dates
             )
-            # Hold cap only on a session-open bar (not Saturday closed time).
-            if (
-                not alerts
-                and not force_reason
-                and max_hold_sessions is not None
-                and session_open
-                and held_sessions >= max_hold_sessions
-            ):
-                force_reason = "hold_cap"
+
+            # Forced exits (time_stop / hold_cap) only on session-open bars.
+            # Precedence on open bars: strategy alert > expiry time_stop > hold_cap.
+            force_reason = None
+            if session_open:
+                if dte <= 0:
+                    force_reason = "time_stop"
+                elif (
+                    max_hold_sessions is not None
+                    and held_sessions >= max_hold_sessions
+                ):
+                    force_reason = "hold_cap"
 
             if alerts:
                 reason = alerts[0].exit_reason
@@ -340,7 +396,7 @@ def run_intraday_backtest(
             )
         open_book = still_open
 
-        # --- entry decision: at most one per ET date; window only ---
+        # --- entry decision: at most one per ET civil date; window only ---
         max_open = int(knobs["max_open_positions"])
         if len(open_book) >= max_open:
             continue
@@ -386,11 +442,8 @@ def run_intraday_backtest(
             result.n_entries_blocked += 1
             continue
 
-        if knobs["prior_day_spy_positive"] and i >= 1:
-            # Compare prior session close vs the session before that when possible
-            prev_close = float(bars.iloc[i - 1]["close"])
-            prev2 = float(bars.iloc[i - 2]["close"]) if i >= 2 else prev_close
-            if prev_close <= prev2:
+        if knobs["prior_day_spy_positive"]:
+            if not _prior_day_spy_ok(rth_closes, today):
                 result.n_entries_blocked += 1
                 continue
 
@@ -440,56 +493,8 @@ def run_intraday_backtest(
         )
         last_entry_date = today
 
-    # Residual force-close at last bar
-    if open_book and len(bars):
-        i = len(bars) - 1
-        idx = bars.index[i]
-        now_et = _bar_ts_et(idx)
-        spy = float(bars.iloc[i]["close"])
-        today = now_et.date()
-        for op in open_book:
-            pos = op.position
-            dte = max(0, (pos.expiration_date - today).days)
-            mark = synthesize_call_premium(
-                spy,
-                xsp_strike=pos.strike,
-                dte=dte,
-                iv=iv_seed,
-                premium_scale=premium_scale,
-                use_bs=use_bs,
-            )
-            pos.mark_price = mark
-            pos.pnl_per_contract = pnl_from_entry_fill(
-                entry_fill=op.entry_fill, exit_mid=mark, econ=econ
-            )
-            pos.pnl_usd = pos.pnl_per_contract * pos.quantity
-            if op.entry_fill > 0:
-                exit_fill = exit_fill_premium(mark, econ)
-                net_pct = (exit_fill - op.entry_fill) / op.entry_fill
-            else:
-                net_pct = 0.0
-            held_sessions = trading_sessions_held(
-                op.entry_ts, now_et, session_dates
-            )
-            result.trades.append(
-                TradeRow(
-                    variant_id=variant_id,
-                    entry_ts=pos.entry_ts or "",
-                    exit_ts=now_et.isoformat(),
-                    dte_at_entry=op.dte_at_entry,
-                    strike=pos.strike,
-                    exit_reason="end_of_series",
-                    net_pnl_pct=round(net_pct, 6),
-                    pnl_usd=round(float(pos.pnl_usd or 0.0), 2),
-                    entry_mid=float(pos.entry_mid_premium or 0.0),
-                    exit_mid=float(mark),
-                    entry_fill=float(op.entry_fill),
-                    bars_held=i - op.entry_i,
-                    regime_at_entry=op.regime_at_entry,
-                    entry_reason=op.entry_reason,
-                    sessions_held=held_sessions,
-                    bar_interval="15m",
-                )
-            )
+    # Never fabricate residual liquidation — note residual opens only.
+    if open_book:
+        result.notes.append(f"residual_open={len(open_book)}")
 
     return result

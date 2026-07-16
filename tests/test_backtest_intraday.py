@@ -556,6 +556,67 @@ def test_utc_midnight_daily_close_cannot_change_same_day_entry(tmp_path):
     assert "residual_open=1" in high.notes
 
 
+def test_uw_daily_loader_preserves_utc_session_date_for_same_day_entry(
+    monkeypatch, tmp_path
+):
+    from xsp_killer.backtest.bars import load_uw_bars
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    intraday = _bars_from_timestamps([et(2024, 6, 14, 15, 45)])
+    prior = _daily_bars(end="2024-06-13")
+
+    def load_with_current(close: float) -> pd.DataFrame:
+        raw = pd.concat(
+            [prior, _daily_bars(1, end="2024-06-14", last_close=close)]
+        ).copy()
+        raw.index = pd.DatetimeIndex(
+            [pd.Timestamp(idx.date(), tz="UTC") for idx in raw.index]
+        )
+
+        class Provider:
+            def get_history(self, ticker, period, interval):
+                assert (ticker, period, interval) == ("SPY", "60d", "1d")
+                return raw
+
+        monkeypatch.setattr(
+            "xsp_killer.backtest.bars._get_uw_provider", lambda: Provider()
+        )
+        loaded = load_uw_bars(
+            "SPY", period="60d", interval="1d", use_cache=False
+        )
+        assert loaded is not None
+        return loaded
+
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key-not-real")
+    low_daily = load_with_current(1.0)
+    high_daily = load_with_current(10_000.0)
+
+    for loaded in (low_daily, high_daily):
+        assert str(loaded.index.tz) == "America/New_York"
+        assert loaded.index[-1].date() == date(2024, 6, 14)
+        assert loaded.index[-1].hour == 0
+
+    rules = _rules(tmp_path)
+    low = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="loader_utc_low",
+        source="uw",
+        daily_context=low_daily,
+    )
+    high = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="loader_utc_high",
+        source="uw",
+        daily_context=high_daily,
+    )
+
+    assert low.n_entries_blocked == high.n_entries_blocked == 0
+    assert "residual_open=1" in low.notes
+    assert "residual_open=1" in high.notes
+
+
 def test_uw_intraday_replay_requires_explicit_daily_context(tmp_path):
     from xsp_killer.backtest.intraday import run_intraday_backtest
 

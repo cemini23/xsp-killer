@@ -52,8 +52,13 @@ def _to_datetime_index_like(values: Any) -> pd.DatetimeIndex | pd.Series:
         return pd.to_datetime(values, utc=True)
 
 
-def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFrame:
-    """Standardize columns to lower-case OHLCV with DatetimeIndex (tz-aware ET)."""
+def _normalize_ohlc(
+    df: pd.DataFrame,
+    *,
+    ts_col: str | None = None,
+    interval: BarInterval | None = None,
+) -> pd.DataFrame:
+    """Standardize OHLCV while preserving daily provider session dates."""
     out = df.copy()
     out.columns = [str(c).strip().lower() for c in out.columns]
     rename = {}
@@ -72,6 +77,11 @@ def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFr
     if ts_col and ts_col in out.columns and "ts" not in out.columns:
         out = out.rename(columns={ts_col: "ts"})
 
+    daily_dates: list[Any] | None = None
+    if interval == "1d":
+        date_values = out["ts"] if "ts" in out.columns else out.index
+        daily_dates = [pd.Timestamp(value).date() for value in date_values]
+
     if not isinstance(out.index, pd.DatetimeIndex):
         if "ts" in out.columns:
             out["ts"] = _to_datetime_index_like(out["ts"])
@@ -79,7 +89,9 @@ def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFr
         else:
             out.index = _to_datetime_index_like(out.index)
 
-    if out.index.tz is None:
+    if daily_dates is not None:
+        out.index = pd.DatetimeIndex(daily_dates).tz_localize("America/New_York")
+    elif out.index.tz is None:
         out.index = out.index.tz_localize(
             "America/New_York", ambiguous="infer", nonexistent="shift_forward"
         )
@@ -104,13 +116,13 @@ def _normalize_ohlc(df: pd.DataFrame, *, ts_col: str | None = None) -> pd.DataFr
 def load_fixture_daily(path: Path | None = None) -> pd.DataFrame:
     p = path or FIXTURE_DAILY
     df = pd.read_csv(p)
-    return _normalize_ohlc(df)
+    return _normalize_ohlc(df, interval="1d")
 
 
 def load_fixture_intraday(path: Path | None = None) -> pd.DataFrame:
     p = path or FIXTURE_INTRADAY
     df = pd.read_csv(p)
-    return _normalize_ohlc(df)
+    return _normalize_ohlc(df, interval="15m")
 
 
 def _cache_key(ticker: str, period: str, interval: str) -> str:
@@ -133,12 +145,14 @@ def _write_cache(df: pd.DataFrame, path: Path) -> None:
     logger.info("uw cache wrote %s (%d rows)", path, len(out))
 
 
-def _read_cache(path: Path) -> pd.DataFrame | None:
+def _read_cache(
+    path: Path, *, interval: BarInterval | None = None
+) -> pd.DataFrame | None:
     if not path.is_file():
         return None
     try:
         df = pd.read_csv(path)
-        return _normalize_ohlc(df)
+        return _normalize_ohlc(df, interval=interval)
     except Exception as exc:  # noqa: BLE001 — fail-open
         logger.warning("uw cache read failed %s: %s", path, exc)
         return None
@@ -181,13 +195,13 @@ def _fetch_uw_history(
     if isinstance(raw, pd.DataFrame):
         if raw.empty:
             return None
-        return _normalize_ohlc(raw)
+        return _normalize_ohlc(raw, interval=interval)
     # Some providers return list-of-dicts
     try:
         df = pd.DataFrame(raw)
         if df.empty:
             return None
-        return _normalize_ohlc(df)
+        return _normalize_ohlc(df, interval=interval)
     except Exception as exc:  # noqa: BLE001
         logger.warning("UW frame normalize failed: %s", exc)
         return None
@@ -203,7 +217,7 @@ def load_uw_bars(
     """Fetch UW OHLC, caching under ``.local/uw_cache/``. Returns None on failure."""
     cache_p = _cache_path(ticker, period, interval)
     if use_cache:
-        cached = _read_cache(cache_p)
+        cached = _read_cache(cache_p, interval=interval)
         if cached is not None and not cached.empty:
             logger.info("uw cache hit %s (%d rows)", cache_p.name, len(cached))
             return cached

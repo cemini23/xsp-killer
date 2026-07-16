@@ -613,3 +613,29 @@ variants:
         swing_hold: true
         max_hold_dte: 2
 
+  opt_dte28_tp20_sl30_gyb:
+    active: false
+    description: "UW optimizer candidate: 28 DTE ATM, TP20/SL30, GREEN or YELLOW>=0.50"
+    overrides:
+      logging:
+        logic_version: xsp_lane_a_opt_dte28_tp20_sl30_gyb
+      entry:
+        dte_pick: target
+        dte_target: 28
+        strike_pick: atm_only
+        regime_gate: GREEN_OR_YELLOW_BOUNCE
+        regime_yellow_frac_min: 0.50
+        regime_yellow_require_bounce: false
+        prior_day_spy_positive: false
+      ta:
+        entry:
+          mode: close_window_only
+          intraday_enabled: false
+          require_vwap_reclaim: false
+      exit:
+        take_profit_pct: 0.20
+        stop_loss_pct: 0.30
+        require_upper_bb_for_take_profit: false
+        swing_hold: false
+        max_hold_dte: 0
+

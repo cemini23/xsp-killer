@@ -1565,3 +1565,39 @@ def test_dip_swing_cluster_leader_none_when_sessions_met_but_trades_under_gate(
     assert "edge_confirmed=true" in cluster["leader_gate"]
     assert "realized_pnl_usd_1x_approx" in cluster["variants"][0]
     assert "edge_confirmed" in cluster["variants"][0]
+
+
+def test_opt_candidate_is_inactive():
+    from xsp_killer.backtest.variants import resolve_variant_specs
+
+    all_specs = resolve_variant_specs(variants="all")
+    candidate = next(
+        s for s in all_specs if s.variant_id == "opt_dte28_tp20_sl30_gyb"
+    )
+    assert candidate.active is False
+    active_ids = {
+        s.variant_id for s in resolve_variant_specs(variants="active")
+    }
+    assert "opt_dte28_tp20_sl30_gyb" not in active_ids
+
+    # Lock approved candidate overrides (UW optimizer leader; soak-inactive).
+    ov = candidate.overrides
+    assert ov["logging"]["logic_version"] == "xsp_lane_a_opt_dte28_tp20_sl30_gyb"
+    entry = ov["entry"]
+    assert entry["dte_pick"] == "target"
+    assert entry["dte_target"] == 28
+    assert entry["strike_pick"] == "atm_only"
+    assert entry["regime_gate"] == "GREEN_OR_YELLOW_BOUNCE"
+    assert entry["regime_yellow_frac_min"] == 0.50
+    assert entry["regime_yellow_require_bounce"] is False
+    assert entry["prior_day_spy_positive"] is False
+    ta_entry = ov["ta"]["entry"]
+    assert ta_entry["mode"] == "close_window_only"
+    assert ta_entry["intraday_enabled"] is False
+    assert ta_entry["require_vwap_reclaim"] is False
+    exit_cfg = ov["exit"]
+    assert exit_cfg["take_profit_pct"] == 0.20
+    assert exit_cfg["stop_loss_pct"] == 0.30
+    assert exit_cfg["require_upper_bb_for_take_profit"] is False
+    assert exit_cfg["swing_hold"] is False
+    assert exit_cfg["max_hold_dte"] == 0

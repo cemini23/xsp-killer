@@ -73,6 +73,8 @@ class TradeRow:
     bars_held: int
     regime_at_entry: str | None = None
     entry_reason: str = ""
+    sessions_held: int = 0
+    bar_interval: str = "1d"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -272,6 +274,7 @@ def run_backtest(
     use_bs: bool = True,
     source: str = "fixture",
     force_one_entry_per_day: bool = True,
+    max_hold_sessions: int | None = None,
 ) -> BacktestResult:
     """Replay one merged ruleset over OHLC bars; return closed trades."""
     data = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
@@ -348,6 +351,14 @@ def run_backtest(
             force_reason = None
             if dte <= 0:
                 force_reason = "time_stop"
+            held_sessions = i - op.entry_i
+            if (
+                not alerts
+                and not force_reason
+                and max_hold_sessions is not None
+                and held_sessions >= max_hold_sessions
+            ):
+                force_reason = "hold_cap"
             if alerts:
                 reason = alerts[0].exit_reason
             elif force_reason:
@@ -377,9 +388,11 @@ def run_backtest(
                     entry_mid=float(pos.entry_mid_premium or 0.0),
                     exit_mid=float(mark),
                     entry_fill=float(op.entry_fill),
-                    bars_held=i - op.entry_i,
+                    bars_held=held_sessions,
                     regime_at_entry=op.regime_at_entry,
                     entry_reason=op.entry_reason,
+                    sessions_held=held_sessions,
+                    bar_interval="1d",
                 )
             )
         open_book = still_open
@@ -509,6 +522,7 @@ def run_backtest(
                 net_pct = (mark - op.entry_fill) / op.entry_fill
             else:
                 net_pct = 0.0
+            held_sessions = i - op.entry_i
             result.trades.append(
                 TradeRow(
                     variant_id=variant_id,
@@ -522,9 +536,11 @@ def run_backtest(
                     entry_mid=float(pos.entry_mid_premium or 0.0),
                     exit_mid=float(mark),
                     entry_fill=float(op.entry_fill),
-                    bars_held=i - op.entry_i,
+                    bars_held=held_sessions,
                     regime_at_entry=op.regime_at_entry,
                     entry_reason=op.entry_reason,
+                    sessions_held=held_sessions,
+                    bar_interval="1d",
                 )
             )
 

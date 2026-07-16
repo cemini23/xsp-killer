@@ -11,7 +11,12 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from xsp_killer.backtest.bars import load_bars, load_fixture_daily
+from xsp_killer.backtest.bars import (
+    _read_cache,
+    _write_cache,
+    load_bars,
+    load_fixture_daily,
+)
 from xsp_killer.backtest.engine import run_backtest
 from xsp_killer.backtest.option_model import bs_call, synthesize_call_premium
 from xsp_killer.backtest.report import build_report, mcpt, write_report
@@ -129,6 +134,50 @@ def test_fixture_daily_loads():
     assert len(df) >= 50
     for col in ("open", "high", "low", "close"):
         assert col in df.columns
+    # Naive fixture dates must localize as America/New_York, not UTC.
+    assert str(df.index.tz) == "America/New_York"
+    first = df.index[0]
+    assert first.year == 2024 and first.month == 1 and first.day == 2
+    assert first.hour == 0 and first.minute == 0
+    # Wall clock is ET midnight (not shifted as if UTC→ET).
+    assert first.utcoffset() is not None
+
+
+def test_uw_cache_roundtrip_across_dst_offsets(tmp_path):
+    """Aware ET index with mixed -05:00/-04:00 must survive write→read.
+
+    _write_cache serializes America/New_York timestamps with DST offsets;
+    pandas 3 raises Mixed timezones on naive to_datetime — cache must not
+    return None.
+    """
+    idx = pd.DatetimeIndex(
+        [
+            datetime(2024, 1, 15, 15, 45, tzinfo=ET),  # EST -05:00
+            datetime(2024, 6, 15, 15, 45, tzinfo=ET),  # EDT -04:00
+        ]
+    )
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 110.0],
+            "high": [101.0, 111.0],
+            "low": [99.0, 109.0],
+            "close": [100.5, 110.5],
+            "volume": [1_000_000.0, 2_000_000.0],
+        },
+        index=idx,
+    )
+    path = tmp_path / "uw_hist_SPY_dst.csv"
+    _write_cache(df, path)
+    loaded = _read_cache(path)
+
+    assert loaded is not None, "cache read must not fail-open on mixed DST offsets"
+    assert len(loaded) == 2
+    assert str(loaded.index.tz) == "America/New_York"
+    assert list(loaded["close"]) == [100.5, 110.5]
+    assert list(loaded["open"]) == [100.0, 110.0]
+    # Wall times preserved in ET (not UTC-shifted).
+    assert loaded.index[0].hour == 15 and loaded.index[0].month == 1
+    assert loaded.index[1].hour == 15 and loaded.index[1].month == 6
 
 
 def test_bs_call_atm_positive():
@@ -184,6 +233,121 @@ def test_swing_hold_near_expiry_time_stop(tmp_path):
     ), f"expected time_stop, got {reasons}"
 
 
+def test_max_hold_sessions_forces_exit(tmp_path):
+    bars = _flat_series(60)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.90,
+        stop_loss_pct=0.90,
+        dte_target=28,
+    )
+    result = run_backtest(
+        bars,
+        rules,
+        variant_id="hold3",
+        max_hold_sessions=3,
+    )
+    capped = [t for t in result.trades if t.exit_reason == "hold_cap"]
+    assert capped
+    assert all(t.bars_held == 3 for t in capped)
+    assert all(t.sessions_held == 3 for t in capped)
+    assert all(t.bar_interval == "1d" for t in capped)
+
+
+def _dte_at_exit(trade) -> int:
+    """Calendar DTE remaining on the exit bar (engine force-expiry axis)."""
+    entry = datetime.fromisoformat(trade.entry_ts)
+    exit_ = datetime.fromisoformat(trade.exit_ts)
+    exp = entry.date() + timedelta(days=int(trade.dte_at_entry))
+    return max(0, (exp - exit_.date()).days)
+
+
+def test_take_profit_precedes_expiry_time_stop(tmp_path):
+    """Strategy take_profit wins when dte<=0 would also force time_stop."""
+    bars = _green_uptrend(75, step=2.0)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.15,
+        stop_loss_pct=0.90,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(bars, rules, variant_id="tp_vs_expiry", iv_seed=0.20)
+    winners = [
+        t for t in res.trades if t.exit_reason == "take_profit" and _dte_at_exit(t) == 0
+    ]
+    assert winners, (
+        f"expected take_profit on expiry bar (dte=0); got "
+        f"{[(t.exit_reason, _dte_at_exit(t), t.net_pnl_pct) for t in res.trades[:8]]}"
+    )
+    assert all(t.exit_reason == "take_profit" for t in winners)
+    assert not any(t.exit_reason == "time_stop" for t in winners)
+
+
+def test_stop_loss_precedes_expiry_time_stop(tmp_path):
+    """Strategy stop_loss wins when dte<=0 would also force time_stop."""
+    n_warm = 58
+    up = [400.0 + i * 1.5 for i in range(n_warm)]
+    peak = up[-1]
+    # Entry while still GREEN, then a sharp next-session crash into expiry.
+    series = up + [peak + 1.0, peak * 0.90, peak * 0.88, peak * 0.87, peak * 0.86]
+    bars = _ohlc_frame(series)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.99,
+        stop_loss_pct=0.10,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(bars, rules, variant_id="sl_vs_expiry", iv_seed=0.20)
+    winners = [
+        t for t in res.trades if t.exit_reason == "stop_loss" and _dte_at_exit(t) == 0
+    ]
+    assert winners, (
+        f"expected stop_loss on expiry bar (dte=0); got "
+        f"{[(t.exit_reason, _dte_at_exit(t), t.net_pnl_pct) for t in res.trades]}"
+    )
+    assert all(t.exit_reason == "stop_loss" for t in winners)
+    assert not any(t.exit_reason == "time_stop" for t in winners)
+
+
+def test_expiry_time_stop_precedes_hold_cap(tmp_path):
+    """Engine expiry force (dte<=0 time_stop) wins over max_hold_sessions hold_cap."""
+    n_warm = 55
+    up = [400.0 + i * 1.2 for i in range(n_warm)]
+    peak = up[-1]
+    flat = [peak + (0.02 if i % 2 == 0 else -0.02) for i in range(25)]
+    bars = _ohlc_frame(up + flat)
+    # Extreme TP/SL so strategy alerts stay quiet; dte=1 and hold=1 collide.
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=5.0,
+        stop_loss_pct=5.0,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(
+        bars,
+        rules,
+        variant_id="expiry_vs_hold",
+        iv_seed=0.18,
+        max_hold_sessions=1,
+    )
+    collided = [
+        t
+        for t in res.trades
+        if t.exit_reason != "end_of_series"
+        and _dte_at_exit(t) == 0
+        and t.bars_held >= 1
+    ]
+    assert collided, "expected closed trades at dte=0 with hold_cap also eligible"
+    assert all(t.exit_reason == "time_stop" for t in collided), (
+        f"expected time_stop over hold_cap, got "
+        f"{sorted({t.exit_reason for t in collided})}"
+    )
+    assert not any(t.exit_reason == "hold_cap" for t in res.trades)
+
+
 def test_determinism_same_fixture(tmp_path):
     bars = load_fixture_daily()
     rules = _rules(tmp_path, take_profit_pct=0.15, stop_loss_pct=0.25)
@@ -207,12 +371,8 @@ def test_reuses_real_evaluate_exit_alerts_and_economics(tmp_path, monkeypatch):
         calls["entry_fill"] += 1
         return real_entry_fill(*args, **kwargs)
 
-    monkeypatch.setattr(
-        "xsp_killer.backtest.engine.evaluate_exit_alerts", spy_eval
-    )
-    monkeypatch.setattr(
-        "xsp_killer.backtest.engine.entry_fill_premium", spy_fill
-    )
+    monkeypatch.setattr("xsp_killer.backtest.engine.evaluate_exit_alerts", spy_eval)
+    monkeypatch.setattr("xsp_killer.backtest.engine.entry_fill_premium", spy_fill)
 
     bars = _green_uptrend(70, step=1.5)
     rules = _rules(tmp_path, take_profit_pct=0.12)
@@ -272,9 +432,10 @@ def test_cli_fixture_mode_offline(tmp_path):
     mds = list(out.glob("lane_a_bt_*.md"))
     assert jsons, "expected json report"
     assert mds, "expected markdown report"
-    assert "Ranked table" in mds[0].read_text(encoding="utf-8") or "mean" in mds[
-        0
-    ].read_text(encoding="utf-8").lower()
+    assert (
+        "Ranked table" in mds[0].read_text(encoding="utf-8")
+        or "mean" in mds[0].read_text(encoding="utf-8").lower()
+    )
 
 
 def test_cli_uw_mode_no_key_exit_zero(tmp_path):

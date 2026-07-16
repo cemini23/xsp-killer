@@ -18,6 +18,8 @@ from typing import Any
 
 import pandas as pd
 
+import yaml
+
 from xsp_killer.backtest.engine import BacktestResult, TradeRow, run_backtest
 from xsp_killer.backtest.optimize import (
     GridBudgetError,
@@ -30,7 +32,7 @@ from xsp_killer.backtest.optimize import (
 from xsp_killer.backtest.report import mcpt
 from xsp_killer.backtest.sweep import BASE_28DTE_ATM_OVERRIDES, _spec_from_overrides
 from xsp_killer.backtest.variants import rules_path_for_spec
-from xsp_killer.lane_a_variants import VariantSpec, _deep_merge
+from xsp_killer.lane_a_variants import VariantSpec, _deep_merge, load_base_rules
 
 logger = logging.getLogger("xsp_killer.backtest.regime_hold")
 
@@ -552,3 +554,402 @@ def run_stage_a(
     finally:
         if own_tmp is not None:
             own_tmp.cleanup()
+
+
+def _as_stage_a_spec(
+    spec: StageASpec | VariantSpec,
+    *,
+    max_hold_sessions: int | None = None,
+) -> StageASpec:
+    if isinstance(spec, StageASpec):
+        return spec
+    hold = int(max_hold_sessions if max_hold_sessions is not None else 1)
+    return StageASpec(spec=spec, max_hold_sessions=hold)
+
+
+def _base_paper_economics() -> dict[str, float]:
+    base = load_base_rules()
+    pe = dict(base.get("paper_economics") or {})
+    return {
+        "commission_usd_per_contract": float(pe.get("commission_usd_per_contract", 0.65)),
+        "slippage_usd_per_share": float(pe.get("slippage_usd_per_share", 0.12)),
+        "slippage_pct_of_premium": float(pe.get("slippage_pct_of_premium", 0.005)),
+        "slippage_max_pct_of_premium": float(
+            pe.get("slippage_max_pct_of_premium", 0.015)
+        ),
+        "premium_scale": float(pe.get("premium_scale", 10.0)),
+    }
+
+
+def run_sensitivity(
+    spec: StageASpec | VariantSpec,
+    bars: pd.DataFrame,
+    *,
+    source: str,
+    iv_seeds: tuple[float, ...] = IV_SEEDS,
+    slippage_mults: tuple[float, ...] = SLIPPAGE_MULTS,
+    max_hold_sessions: int | None = None,
+    tmp_dir: Path | None = None,
+) -> dict[str, Any]:
+    """IV × slippage matrix; scales temporary paper economics only (no global mutation)."""
+    cell = _as_stage_a_spec(spec, max_hold_sessions=max_hold_sessions)
+    base_pe = _base_paper_economics()
+    cache_dir = tmp_dir
+    own_tmp = None
+    if cache_dir is None:
+        own_tmp = tempfile.TemporaryDirectory(prefix="xsp_rha_sens_")
+        cache_dir = Path(own_tmp.name)
+
+    cells_out: list[dict[str, Any]] = []
+    try:
+        for iv, mult in product(iv_seeds, slippage_mults):
+            pe = {
+                "commission_usd_per_contract": base_pe["commission_usd_per_contract"],
+                "premium_scale": base_pe["premium_scale"],
+                "slippage_usd_per_share": base_pe["slippage_usd_per_share"] * float(mult),
+                "slippage_pct_of_premium": base_pe["slippage_pct_of_premium"]
+                * float(mult),
+                "slippage_max_pct_of_premium": base_pe["slippage_max_pct_of_premium"]
+                * float(mult),
+            }
+            ov = deepcopy(cell.overrides)
+            ov["paper_economics"] = pe
+            sens_id = f"{cell.variant_id}_iv{int(round(iv * 100))}_slp{mult:g}"
+            logging_cfg = ov.setdefault("logging", {})
+            logging_cfg["logic_version"] = f"xsp_lane_a_{sens_id}"
+            tmp_spec = _spec_from_overrides(
+                sens_id, ov, description=f"sens of {cell.variant_id}"
+            )
+            rpath = rules_path_for_spec(tmp_spec, tmp_dir=cache_dir)
+            res = run_backtest(
+                bars,
+                rpath,
+                variant_id=sens_id,
+                iv_seed=float(iv),
+                use_bs=True,
+                source=source,
+                max_hold_sessions=cell.max_hold_sessions,
+            )
+            pnls = [t.net_pnl_pct for t in res.trades]
+            n = len(pnls)
+            mean_p = float(sum(pnls) / n) if n else 0.0
+            med_p = float(median(pnls)) if n else 0.0
+            cells_out.append(
+                {
+                    "iv_seed": float(iv),
+                    "slippage_mult": float(mult),
+                    "n_trades": n,
+                    "mean_net_pnl_pct": round(mean_p, 6),
+                    "median_net_pnl_pct": round(med_p, 6),
+                    "positive": bool(mean_p > 0),
+                }
+            )
+    finally:
+        if own_tmp is not None:
+            own_tmp.cleanup()
+
+    # Deterministic order
+    cells_out.sort(key=lambda c: (c["iv_seed"], c["slippage_mult"]))
+
+    # IV positive at base slippage (1.0×): count seeds with positive mean
+    iv_at_1x = {
+        c["iv_seed"]: c for c in cells_out if abs(float(c["slippage_mult"]) - 1.0) < 1e-9
+    }
+    iv_positive_count = sum(1 for c in iv_at_1x.values() if c["positive"])
+
+    # 1.5× slippage at baseline IV 0.18 if present, else any 1.5× with majority
+    slip_15 = [
+        c
+        for c in cells_out
+        if abs(float(c["slippage_mult"]) - 1.5) < 1e-9
+        and abs(float(c["iv_seed"]) - 0.18) < 1e-9
+    ]
+    if not slip_15:
+        slip_15 = [c for c in cells_out if abs(float(c["slippage_mult"]) - 1.5) < 1e-9]
+    slip_15_pos = bool(slip_15 and all(c["positive"] for c in slip_15[:1]))
+
+    return {
+        "variant_id": cell.variant_id,
+        "max_hold_sessions": cell.max_hold_sessions,
+        "iv_seeds": [float(x) for x in iv_seeds],
+        "slippage_mults": [float(x) for x in slippage_mults],
+        "cells": cells_out,
+        "iv_positive_count": int(iv_positive_count),
+        "slippage_1_5x_positive": bool(slip_15_pos),
+    }
+
+
+def _param_tuple(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("regime_gate") or "GREEN").upper(),
+        (
+            None
+            if row.get("regime_yellow_frac_min") is None
+            else round(float(row["regime_yellow_frac_min"]), 4)
+        ),
+        (
+            None
+            if row.get("regime_yellow_require_bounce") is None
+            else bool(row.get("regime_yellow_require_bounce"))
+        ),
+        bool(row.get("prior_day_spy_positive", False)),
+        int(row.get("max_hold_sessions") or 0),
+        int(row.get("dte_target") or COARSE_DTE),
+        round(float(row.get("take_profit_pct") or COARSE_TP), 4),
+        round(float(row.get("stop_loss_pct") or COARSE_SL), 4),
+    )
+
+
+def _axis_neighbors(axis: str, value: Any) -> list[Any]:
+    """One-step neighbors on a discrete search axis."""
+    if axis == "hold":
+        grid = list(HOLD_SESSIONS_GRID)
+        try:
+            i = grid.index(int(value))
+        except ValueError:
+            return []
+        out = []
+        if i > 0:
+            out.append(grid[i - 1])
+        if i + 1 < len(grid):
+            out.append(grid[i + 1])
+        return out
+    if axis == "yellow_frac":
+        if value is None:
+            return []
+        grid = [0.40, 0.50, 0.60, 0.75]
+        try:
+            i = grid.index(round(float(value), 2))
+        except ValueError:
+            # tolerate float noise
+            rounded = [round(abs(float(value) - g), 6) for g in grid]
+            if min(rounded) > 1e-6:
+                return []
+            i = rounded.index(min(rounded))
+        out = []
+        if i > 0:
+            out.append(grid[i - 1])
+        if i + 1 < len(grid):
+            out.append(grid[i + 1])
+        return out
+    if axis == "dte":
+        grid = list(REFINE_DTE)
+        try:
+            i = grid.index(int(value))
+        except ValueError:
+            return []
+        out = []
+        if i > 0:
+            out.append(grid[i - 1])
+        if i + 1 < len(grid):
+            out.append(grid[i + 1])
+        return out
+    if axis == "tp":
+        grid = list(REFINE_TP)
+        try:
+            i = grid.index(round(float(value), 4))
+        except ValueError:
+            return []
+        out = []
+        if i > 0:
+            out.append(grid[i - 1])
+        if i + 1 < len(grid):
+            out.append(grid[i + 1])
+        return out
+    if axis == "sl":
+        grid = list(REFINE_SL)
+        try:
+            i = grid.index(round(float(value), 4))
+        except ValueError:
+            return []
+        out = []
+        if i > 0:
+            out.append(grid[i - 1])
+        if i + 1 < len(grid):
+            out.append(grid[i + 1])
+        return out
+    return []
+
+
+def _are_parameter_adjacent(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """True if a and b differ by one step on exactly one search axis."""
+    ta, tb = _param_tuple(a), _param_tuple(b)
+    # indices: 0 gate, 1 yfrac, 2 ybounce, 3 prior, 4 hold, 5 dte, 6 tp, 7 sl
+    diffs = [i for i in range(len(ta)) if ta[i] != tb[i]]
+    if len(diffs) != 1:
+        return False
+    i = diffs[0]
+    if i == 4:  # hold
+        return tb[4] in _axis_neighbors("hold", ta[4])
+    if i == 1:  # yellow frac
+        return tb[1] in _axis_neighbors("yellow_frac", ta[1])
+    if i == 5:  # dte
+        return tb[5] in _axis_neighbors("dte", ta[5])
+    if i == 6:  # tp
+        return tb[6] in _axis_neighbors("tp", ta[6])
+    if i == 7:  # sl
+        return tb[7] in _axis_neighbors("sl", ta[7])
+    # gate / bounce / prior flips are not "adjacent threshold" neighbors
+    return False
+
+
+def stable_windows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Connected components of positive cells linked by parameter adjacency.
+
+    Ranking-adjacent rows that are parameter-distant do not form a window.
+    """
+    positive = [
+        r
+        for r in rows
+        if float(r.get("holdout_mean_net_pnl_pct") or 0.0) > 0
+    ]
+    if len(positive) < 2:
+        return []
+
+    n = len(positive)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _are_parameter_adjacent(positive[i], positive[j]):
+                union(i, j)
+
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for i, row in enumerate(positive):
+        root = find(i)
+        groups.setdefault(root, []).append(row)
+
+    windows: list[dict[str, Any]] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        member_ids = [str(m.get("variant_id") or "") for m in members]
+        means = [float(m.get("holdout_mean_net_pnl_pct") or 0.0) for m in members]
+        windows.append(
+            {
+                "member_ids": member_ids,
+                "n_members": len(members),
+                "mean_holdout_mean_net_pnl_pct": round(sum(means) / len(means), 6),
+                "min_holdout_mean_net_pnl_pct": round(min(means), 6),
+            }
+        )
+    windows.sort(
+        key=lambda w: (
+            float(w.get("min_holdout_mean_net_pnl_pct") or 0.0),
+            int(w.get("n_members") or 0),
+        ),
+        reverse=True,
+    )
+    return windows
+
+
+def edge_confirmed(
+    row: dict[str, Any],
+    sensitivity: dict[str, Any],
+    intraday_row: dict[str, Any] | None,
+    *,
+    min_trades: int,
+) -> tuple[bool, str]:
+    """All gates must pass for edge_confirmed; otherwise explain first failure."""
+    hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
+    if hold_mean <= 0:
+        return False, "holdout_mean_not_positive"
+
+    n_hold = int(row.get("n_holdout") or 0)
+    if n_hold < int(min_trades):
+        return False, "holdout_sample_below_min_trades"
+
+    if row.get("mcpt_pass_5pct") is not True:
+        return False, "mcpt_not_passed"
+
+    if row.get("stable_window") is not True:
+        return False, "no_stable_parameter_window"
+
+    if intraday_row is None:
+        return False, "intraday_validation_missing"
+    intra_mean = float(intraday_row.get("mean_net_pnl_pct") or 0.0)
+    if intra_mean < 0:
+        return False, "intraday_negative"
+
+    iv_pos = int(sensitivity.get("iv_positive_count") or 0)
+    if iv_pos < 3:
+        return False, "iv_seeds_below_3_of_4"
+
+    if sensitivity.get("slippage_1_5x_positive") is not True:
+        return False, "slippage_1_5x_not_positive"
+
+    return True, "edge_confirmed"
+
+
+def recommended_regime_hold_yaml(
+    row: dict[str, Any],
+    overrides: dict[str, Any],
+    *,
+    min_trades: int = 8,
+    edge_ok: bool | None = None,
+    max_hold_sessions: int | None = None,
+) -> str:
+    """Always emit ``active: false``; never include LIVE_ enablement text."""
+    n_hold = int(row.get("n_holdout") or 0)
+    hold_mean = float(row.get("holdout_mean_net_pnl_pct") or 0.0)
+    mcpt_pass = bool(row.get("mcpt_pass_5pct") is True)
+    hold = int(
+        max_hold_sessions
+        if max_hold_sessions is not None
+        else (row.get("max_hold_sessions") or 0)
+    )
+    if edge_ok is None:
+        edge_ok = (
+            hold_mean > 0
+            and mcpt_pass
+            and n_hold >= int(min_trades)
+            and row.get("stable_window") is True
+        )
+
+    vid = str(row.get("variant_id") or "rha_candidate")
+    label = "EDGE-CONFIRMED (inactive)" if edge_ok else "CANDIDATE (least-bad)"
+    desc = (
+        f"{label} from UW regime/hold Stage A; active:false — human paste only. "
+        f"holdout_mean={hold_mean:.4f} n={n_hold} mcpt_pass={mcpt_pass} "
+        f"max_hold_sessions={hold} (engine kwarg, not a live YAML key)"
+    )
+
+    ov = deepcopy(overrides)
+    # Never emit unknown live keys or LIVE_ flags
+    log_cfg = ov.setdefault("logging", {})
+    log_cfg["logic_version"] = f"xsp_lane_a_{vid}"
+    for section in ("entry", "exit", "ta", "paper_entry"):
+        block = ov.get(section)
+        if isinstance(block, dict):
+            block.pop("max_hold_sessions", None)
+
+    block = {
+        vid: {
+            "active": False,
+            "description": desc,
+            "overrides": ov,
+        }
+    }
+    header = (
+        "# Paste under config/lane_a_variants.yaml → variants: (human only)\n"
+        "# Does not flip live trading gates. active: false always.\n"
+        f"# status: {label}\n"
+        f"# research max_hold_sessions={hold} (apply via backtest engine only)\n"
+    )
+    body = yaml.safe_dump(block, sort_keys=False, default_flow_style=False)
+    text = header + body
+    # Safety: strip any accidental LIVE_ strings
+    if "LIVE_" in text:
+        text = text.replace("LIVE_", "RESEARCH_")
+    return text

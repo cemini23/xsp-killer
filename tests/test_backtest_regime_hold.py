@@ -9,8 +9,12 @@ from xsp_killer.backtest.regime_hold import (
     GridBudgetError,
     StageASpec,
     build_stage_a_grid,
+    edge_confirmed,
+    recommended_regime_hold_yaml,
     refine_stage_a,
+    run_sensitivity,
     run_stage_a,
+    stable_windows,
 )
 
 
@@ -134,3 +138,210 @@ def test_refine_stage_a_preserves_regime_hold_and_budget():
             max_grid=10,
             allow_large=False,
         )
+
+
+def _candidate_cell() -> StageASpec:
+    return build_stage_a_grid()[0]
+
+
+def test_sensitivity_is_deterministic_and_complete():
+    candidate = _candidate_cell()
+    bars = load_fixture_daily()
+    result = run_sensitivity(candidate, bars, source="fixture")
+    assert result == run_sensitivity(candidate, bars, source="fixture")
+    assert len(result["cells"]) == 12
+    assert result["iv_seeds"] == [0.14, 0.18, 0.22, 0.28]
+    assert result["slippage_mults"] == [1.0, 1.5, 2.0]
+    for cell in result["cells"]:
+        assert "iv_seed" in cell
+        assert "slippage_mult" in cell
+        assert "n_trades" in cell
+        assert "mean_net_pnl_pct" in cell
+        assert "median_net_pnl_pct" in cell
+        assert "positive" in cell
+
+
+def test_stable_windows_require_adjacent_parameter_settings():
+    # Isolated positive is not stable
+    isolated = [
+        {
+            "variant_id": "a",
+            "holdout_mean_net_pnl_pct": 0.05,
+            "max_hold_sessions": 1,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+        },
+        {
+            "variant_id": "b",
+            "holdout_mean_net_pnl_pct": -0.01,
+            "max_hold_sessions": 10,
+            "regime_gate": "GREEN_OR_YELLOW_BOUNCE",
+            "prior_day_spy_positive": True,
+            "regime_yellow_frac_min": 0.75,
+            "dte_target": 21,
+            "take_profit_pct": 0.10,
+            "stop_loss_pct": 0.40,
+        },
+    ]
+    assert stable_windows(isolated) == []
+
+    # Two adjacent positive holds (same regime/prior/dte/tp/sl) are stable
+    adjacent_holds = [
+        {
+            "variant_id": "h1",
+            "holdout_mean_net_pnl_pct": 0.04,
+            "max_hold_sessions": 1,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+        },
+        {
+            "variant_id": "h2",
+            "holdout_mean_net_pnl_pct": 0.03,
+            "max_hold_sessions": 2,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+        },
+        {
+            "variant_id": "h_neg",
+            "holdout_mean_net_pnl_pct": -0.02,
+            "max_hold_sessions": 3,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+        },
+    ]
+    wins = stable_windows(adjacent_holds)
+    assert wins
+    member_ids = {m for w in wins for m in w.get("member_ids", [])}
+    assert "h1" in member_ids and "h2" in member_ids
+    assert "h_neg" not in member_ids
+
+    # Ranking-adjacent but parameter-distant positives are NOT stable
+    ranking_adjacent_only = [
+        {
+            "variant_id": "x",
+            "holdout_mean_net_pnl_pct": 0.10,
+            "max_hold_sessions": 1,
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+            "regime_yellow_frac_min": None,
+            "dte_target": 28,
+            "take_profit_pct": 0.20,
+            "stop_loss_pct": 0.30,
+        },
+        {
+            "variant_id": "y",
+            "holdout_mean_net_pnl_pct": 0.09,
+            "max_hold_sessions": 10,
+            "regime_gate": "GREEN_OR_YELLOW_BOUNCE",
+            "prior_day_spy_positive": True,
+            "regime_yellow_frac_min": 0.40,
+            "dte_target": 35,
+            "take_profit_pct": 0.10,
+            "stop_loss_pct": 0.40,
+        },
+    ]
+    assert stable_windows(ranking_adjacent_only) == []
+
+
+def test_edge_confirmed_requires_all_gates():
+    good_row = {
+        "variant_id": "good",
+        "holdout_mean_net_pnl_pct": 0.05,
+        "n_holdout": 12,
+        "mcpt_pass_5pct": True,
+        "stable_window": True,
+    }
+    sens_ok = {
+        "iv_positive_count": 3,
+        "iv_seeds": [0.14, 0.18, 0.22, 0.28],
+        "slippage_1_5x_positive": True,
+        "cells": [],
+    }
+    intraday_ok = {"mean_net_pnl_pct": 0.01}
+
+    ok, reason = edge_confirmed(good_row, sens_ok, intraday_ok, min_trades=8)
+    assert ok is True
+    assert "confirmed" in reason.lower() or reason == "edge_confirmed"
+
+    # Fail: negative holdout
+    bad = dict(good_row, holdout_mean_net_pnl_pct=-0.01)
+    ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
+    assert ok is False
+
+    # Fail: insufficient sample
+    bad = dict(good_row, n_holdout=3)
+    ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
+    assert ok is False
+
+    # Fail: MCPT
+    bad = dict(good_row, mcpt_pass_5pct=False)
+    ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
+    assert ok is False
+
+    # Fail: stable window
+    bad = dict(good_row, stable_window=False)
+    ok, _ = edge_confirmed(bad, sens_ok, intraday_ok, min_trades=8)
+    assert ok is False
+
+    # Fail: negative intraday
+    ok, _ = edge_confirmed(
+        good_row, sens_ok, {"mean_net_pnl_pct": -0.02}, min_trades=8
+    )
+    assert ok is False
+
+    # Fail: fewer than 3 IV seeds positive
+    sens_bad_iv = dict(sens_ok, iv_positive_count=2)
+    ok, _ = edge_confirmed(good_row, sens_bad_iv, intraday_ok, min_trades=8)
+    assert ok is False
+
+    # Fail: 1.5x slippage not positive
+    sens_bad_slip = dict(sens_ok, slippage_1_5x_positive=False)
+    ok, _ = edge_confirmed(good_row, sens_bad_slip, intraday_ok, min_trades=8)
+    assert ok is False
+
+
+def test_recommended_yaml_always_inactive_no_live_text():
+    row = {
+        "variant_id": "rha_dte28_tp20_sl30_green_p0_h3",
+        "n_holdout": 20,
+        "holdout_mean_net_pnl_pct": 0.05,
+        "mcpt_pass_5pct": True,
+        "stable_window": True,
+        "max_hold_sessions": 3,
+    }
+    ov = {
+        "entry": {
+            "dte_target": 28,
+            "strike_pick": "atm_only",
+            "regime_gate": "GREEN",
+            "prior_day_spy_positive": False,
+        },
+        "exit": {"take_profit_pct": 0.20, "stop_loss_pct": 0.30},
+    }
+    text = recommended_regime_hold_yaml(row, ov, edge_ok=True, min_trades=8)
+    assert "active: false" in text.lower()
+    assert "LIVE_" not in text
+    assert "live_entries" not in text.lower()
+    assert "live_exits" not in text.lower()
+    # Even when edge fails, still inactive
+    text2 = recommended_regime_hold_yaml(row, ov, edge_ok=False, min_trades=8)
+    assert "active: false" in text2.lower()
+    assert "LIVE_" not in text2
+    # Hold is documented in description, not as unknown live key in overrides dump
+    assert "max_hold_sessions" not in (ov.get("exit") or {})

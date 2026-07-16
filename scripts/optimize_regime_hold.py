@@ -746,6 +746,7 @@ def main(argv: list[str] | None = None) -> int:
                     iv_seed=float(args.iv),
                     source=isource,
                     max_hold_sessions=cell.max_hold_sessions,
+                    daily_context=daily_bars,
                 )
                 summary = _summarize_intraday(res)
                 summary["max_hold_sessions"] = cell.max_hold_sessions

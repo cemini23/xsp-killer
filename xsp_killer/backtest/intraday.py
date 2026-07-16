@@ -21,7 +21,6 @@ import yaml
 from xsp_killer.backtest.engine import (
     BacktestResult,
     TradeRow,
-    _iloc_at,
     _pick_dte,
     _pick_strike,
     _regime_series,
@@ -38,7 +37,6 @@ from xsp_killer.lane_a_monitor import (
     xsp_session_open,
 )
 from xsp_killer.lane_a_ta import TaRules, enrich_bars
-from xsp_killer.macro_regime import SMA_SLOW
 from xsp_killer.paper_economics import (
     PaperEconomics,
     entry_fill_premium,
@@ -160,6 +158,109 @@ def completed_rth_session_closes(bars: pd.DataFrame) -> list[tuple[date, float]]
     return [(d, last_close[d]) for d in order]
 
 
+def _daily_context_from_intraday(bars: pd.DataFrame) -> pd.DataFrame:
+    """Build fixture-only daily closes from completed observed RTH sessions."""
+    closes = completed_rth_session_closes(bars)
+    if not closes:
+        return pd.DataFrame(columns=["close"])
+    return pd.DataFrame(
+        {"close": [close for _, close in closes]},
+        index=pd.DatetimeIndex([pd.Timestamp(day) for day, _ in closes]),
+    )
+
+
+def _unknown_regime_row() -> dict[str, Any]:
+    return {
+        "regime": "UNKNOWN",
+        "regime_ok": False,
+        "yellow_frac": None,
+        "ema21": None,
+        "sma50": None,
+    }
+
+
+def align_completed_daily_regime(
+    intraday: pd.DataFrame,
+    daily_context: pd.DataFrame,
+) -> pd.DataFrame:
+    """Align each decision bar with the latest prior civil day's regime."""
+    daily = daily_context.sort_index()
+    if daily.empty or "close" not in daily:
+        return pd.DataFrame(
+            [_unknown_regime_row() for _ in intraday.index],
+            index=intraday.index,
+        )
+
+    regime = _regime_series(daily["close"].astype(float))
+    by_date: dict[date, pd.Series] = {}
+    for idx, row in regime.iterrows():
+        by_date[_bar_ts_et(idx).date()] = row
+    dates = sorted(by_date)
+
+    rows: list[dict[str, Any]] = []
+    for idx in intraday.index:
+        civil_date = _bar_ts_et(idx).date()
+        eligible = [day for day in dates if day < civil_date]
+        if not eligible:
+            rows.append(_unknown_regime_row())
+        else:
+            rows.append(by_date[eligible[-1]].to_dict())
+    return pd.DataFrame(rows, index=intraday.index)
+
+
+def completed_hourly_bars(bars: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate 15m bars into hourly buckets labeled at completion.
+
+    Buckets are anchored at :30 to match the 09:30 RTH open. A bucket carrying
+    a completion label after a decision timestamp is unavailable to that
+    decision, even if later 15m rows are present in the replay frame.
+    """
+    if bars is None or bars.empty:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    frame = bars.copy().sort_index()
+    index = pd.DatetimeIndex(pd.to_datetime(frame.index))
+    if index.tz is None:
+        index = index.tz_localize(ET)
+    else:
+        index = index.tz_convert(ET)
+    frame.index = index
+
+    aggregations: dict[str, str] = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+    }
+    if "volume" in frame.columns:
+        aggregations["volume"] = "sum"
+    hourly = frame.resample(
+        "1h",
+        origin="start_day",
+        offset="30min",
+        label="left",
+        closed="left",
+    ).agg(aggregations)
+    hourly = hourly.dropna(subset=["close"])
+    hourly.index = hourly.index + pd.Timedelta(hours=1)
+    return hourly
+
+
+def _latest_completed_iloc(index: pd.Index, decision: Any) -> int | None:
+    """Return the latest context row completed by ``decision``."""
+    if index.empty:
+        return None
+    decision_ts = pd.Timestamp(decision)
+    if decision_ts.tzinfo is None:
+        decision_ts = decision_ts.tz_localize(ET)
+    else:
+        decision_ts = decision_ts.tz_convert(ET)
+    eligible = index[index <= decision_ts]
+    if eligible.empty:
+        return None
+    return int(index.get_loc(eligible[-1]))
+
+
 def _prior_day_spy_ok(
     completed_closes: list[tuple[date, float]],
     entry_civil_date: date,
@@ -264,6 +365,7 @@ def run_intraday_backtest(
     source: str = "fixture",
     max_hold_sessions: int | None = None,
     use_bs: bool = True,
+    daily_context: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Replay one ruleset on 15m bars with live XSP session semantics."""
     data = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
@@ -287,12 +389,19 @@ def run_intraday_backtest(
 
     session_dates = session_date_order(bars)
     rth_closes = completed_rth_session_closes(bars)
-    closes = bars["close"].astype(float)
-    regime_df = _regime_series(closes)
+    if daily_context is None:
+        daily_context = _daily_context_from_intraday(bars)
+        result.notes.append("daily_context derived from completed fixture RTH closes")
+    regime_df = align_completed_daily_regime(bars, daily_context)
 
+    primary_bars = (
+        completed_hourly_bars(bars)
+        if ta_rules.primary_timeframe == "1h"
+        else bars.copy()
+    )
     try:
         enriched = enrich_bars(
-            bars.copy(), period=ta_rules.bb_period, std=ta_rules.bb_std
+            primary_bars, period=ta_rules.bb_period, std=ta_rules.bb_std
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich_bars failed: %s", exc)
@@ -336,7 +445,7 @@ def run_intraday_backtest(
 
             ta_sig = None
             if lane_rules.require_upper_bb_for_take_profit:
-                ei = _iloc_at(enriched.index, idx)
+                ei = _latest_completed_iloc(enriched.index, idx)
                 if ei is not None:
                     ta_sig = _ta_signal_at(enriched, ei, ta_rules)
 
@@ -406,9 +515,6 @@ def run_intraday_backtest(
             continue
         if not in_entry_window(now_et):
             continue
-        # Warmup: need SMA50 history on the 15m path
-        if i < SMA_SLOW:
-            continue
 
         ta_entry_ok = False
         ta_detail = ""
@@ -420,7 +526,7 @@ def run_intraday_backtest(
             or knobs.get("intraday_entry_enabled")
         )
         if need_bounce:
-            ei = _iloc_at(enriched.index, idx)
+            ei = _latest_completed_iloc(enriched.index, idx)
             if ei is not None:
                 ta_entry_ok, ta_detail = _ta_entry_ok_at(
                     enriched,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -77,6 +78,28 @@ def _green_warmup_days(
         d += timedelta(days=1)
     bars = _bars_from_timestamps(stamps, start_px=start_px, step=step)
     return bars, stamps
+
+
+def _daily_bars(
+    n_days: int = 60,
+    *,
+    end: str = "2024-06-14",
+    last_close: float | None = None,
+) -> pd.DataFrame:
+    index = pd.bdate_range(end=end, periods=n_days, tz=ET)
+    closes = [400.0 + i for i in range(n_days)]
+    if last_close is not None:
+        closes[-1] = last_close
+    rows = [
+        _ohlc_row(ts.to_pydatetime(), close)
+        for ts, close in zip(index, closes, strict=True)
+    ]
+    return pd.DataFrame(rows).set_index("ts")
+
+
+def _daily_context_before(bars: pd.DataFrame) -> pd.DataFrame:
+    first_date = min(_bar.date() for _bar in pd.to_datetime(bars.index))
+    return _daily_bars(end=(first_date - timedelta(days=1)).isoformat())
 
 
 def _rules(
@@ -247,6 +270,7 @@ def test_one_entry_per_et_date_even_with_two_close_window_bars(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=1,
+        daily_context=_daily_context_before(bars),
     )
     entries_by_date: dict[date, int] = {}
     for t in res.trades:
@@ -325,6 +349,7 @@ def test_replay_does_not_exit_when_session_closed(tmp_path, monkeypatch):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
     )
     # Spy saw Saturday closed eval with 0 alerts
     sat_calls = [c for c in calls if c[0].date() == date(2024, 6, 8)]
@@ -376,6 +401,7 @@ def test_hold_cap_friday_closes_next_session_not_saturday(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=1,
+        daily_context=_daily_context_before(bars),
     )
     capped = [t for t in res.trades if t.exit_reason == "hold_cap"]
     reasons = [t.exit_reason for t in res.trades]
@@ -428,6 +454,157 @@ def test_no_entry_without_1545_bar(tmp_path):
     )
 
 
+# ---------------------------------------------------------------------------
+# Super-audit v10 Task 1: causal daily and completed-1h contexts
+# ---------------------------------------------------------------------------
+
+
+def test_intraday_regime_uses_daily_context(monkeypatch, tmp_path):
+    from xsp_killer.backtest import intraday as intrad
+
+    daily = _daily_bars(end="2024-06-13")
+    intraday = _bars_from_timestamps([et(2024, 6, 14, 15, 45)])
+    seen: list[int] = []
+
+    def spy_regime(closes):
+        seen.append(len(closes))
+        return pd.DataFrame(
+            {
+                "regime": "GREEN",
+                "regime_ok": True,
+                "yellow_frac": 1.0,
+                "ema21": closes,
+                "sma50": closes,
+            },
+            index=closes.index,
+        )
+
+    monkeypatch.setattr(intrad, "_regime_series", spy_regime)
+    intrad.run_intraday_backtest(
+        intraday,
+        _rules(tmp_path),
+        variant_id="daily_context",
+        daily_context=daily,
+    )
+
+    assert seen == [60]
+
+
+def test_current_daily_close_cannot_change_1545_entry_decision(tmp_path):
+    from xsp_killer.backtest.intraday import run_intraday_backtest
+
+    intraday = _bars_from_timestamps([et(2024, 6, 14, 15, 45)])
+    prior_only = _daily_bars(end="2024-06-13")
+    with_current_low = pd.concat(
+        [prior_only, _daily_bars(1, end="2024-06-14", last_close=1.0)]
+    )
+    with_current_high = pd.concat(
+        [prior_only, _daily_bars(1, end="2024-06-14", last_close=10_000.0)]
+    )
+    rules = _rules(tmp_path)
+
+    low = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="daily_low",
+        daily_context=with_current_low,
+    )
+    high = run_intraday_backtest(
+        intraday,
+        rules,
+        variant_id="daily_high",
+        daily_context=with_current_high,
+    )
+
+    assert low.n_entries_blocked == high.n_entries_blocked == 0
+    assert any(note == "residual_open=1" for note in low.notes)
+    assert any(note == "residual_open=1" for note in high.notes)
+
+
+def test_completed_hourly_bars_exclude_active_bucket_and_future_1600():
+    from xsp_killer.backtest.intraday import completed_hourly_bars
+
+    stamps = [
+        et(2024, 6, 14, 14, 30),
+        et(2024, 6, 14, 14, 45),
+        et(2024, 6, 14, 15, 0),
+        et(2024, 6, 14, 15, 15),
+        et(2024, 6, 14, 15, 30),
+        et(2024, 6, 14, 15, 45),
+        et(2024, 6, 14, 16, 0),
+    ]
+    bars = _bars_from_timestamps(stamps, start_px=100.0, step=1.0)
+    changed = bars.copy()
+    changed.loc[pd.Timestamp(et(2024, 6, 14, 16, 0)), "close"] = 10_000.0
+    decision = pd.Timestamp(et(2024, 6, 14, 15, 45))
+
+    original_context = completed_hourly_bars(bars)
+    changed_context = completed_hourly_bars(changed)
+    original_at_decision = original_context.loc[original_context.index <= decision]
+    changed_at_decision = changed_context.loc[changed_context.index <= decision]
+
+    pd.testing.assert_frame_equal(original_at_decision, changed_at_decision)
+    assert not original_at_decision.empty
+    assert original_at_decision.index.max() <= decision
+
+
+def test_primary_ta_uses_completed_hourly_aggregates(monkeypatch, tmp_path):
+    from xsp_killer.backtest import intraday as intrad
+
+    bars, _ = _green_warmup_days(5)
+    daily = _daily_bars(end="2024-05-31")
+    enriched_inputs: list[pd.DataFrame] = []
+    selected_ta_bars: list[pd.Timestamp] = []
+
+    def spy_enrich(frame, *, period, std):
+        enriched_inputs.append(frame.copy())
+        out = frame.copy()
+        out["bb_mid"] = out["close"]
+        out["bb_upper"] = out["close"] * 1.01
+        out["bb_lower"] = out["close"] * 0.99
+        out["vwap"] = out["close"]
+        return out
+
+    def spy_ta_entry(frame, i, **_kwargs):
+        selected_ta_bars.append(pd.Timestamp(frame.index[i]))
+        return True, "causal hourly context"
+
+    monkeypatch.setattr(intrad, "enrich_bars", spy_enrich)
+    monkeypatch.setattr(intrad, "_ta_entry_ok_at", spy_ta_entry)
+    intrad.run_intraday_backtest(
+        bars,
+        _rules(tmp_path, regime_gate="DIP_BOUNCE"),
+        variant_id="hourly_primary",
+        daily_context=daily,
+    )
+
+    assert len(enriched_inputs) == 1
+    primary = enriched_inputs[0]
+    assert len(primary) < len(bars)
+    assert all(pd.Timestamp(idx).minute == 30 for idx in primary.index)
+    assert selected_ta_bars
+    assert all(ts.hour <= 15 for ts in selected_ta_bars)
+    assert all(ts.minute == 30 for ts in selected_ta_bars)
+
+
+def test_optimizer_stage_b_passes_loaded_daily_context():
+    script = ROOT / "scripts" / "optimize_regime_hold.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "run_intraday_backtest"
+    ]
+
+    assert calls
+    assert all(
+        any(keyword.arg == "daily_context" for keyword in call.keywords)
+        for call in calls
+    )
+
+
 def test_exits_evaluated_before_entries_on_same_bar(tmp_path, monkeypatch):
     """Existing positions are marked/exited before any new entry on the same bar."""
     from xsp_killer.backtest import intraday as intrad
@@ -457,6 +634,7 @@ def test_exits_evaluated_before_entries_on_same_bar(tmp_path, monkeypatch):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=2,
+        daily_context=_daily_context_before(warm),
     )
     assert res.trades
     # Once a position is open, marks must appear before later entry gates
@@ -478,6 +656,7 @@ def test_trade_rows_use_15m_and_sessions_held(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=2,
+        daily_context=_daily_context_before(bars),
     )
     assert res.trades
     for t in res.trades:
@@ -618,6 +797,7 @@ def test_time_stop_requires_session_open_not_gap_or_weekend(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
     )
     time_stops = [t for t in res.trades if t.exit_reason == "time_stop"]
     reasons = [t.exit_reason for t in res.trades]
@@ -660,6 +840,7 @@ def test_hold_cap_requires_session_open_not_gap(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=1,
+        daily_context=_daily_context_before(bars),
     )
     capped = [t for t in res.trades if t.exit_reason == "hold_cap"]
     assert capped, f"expected hold_cap, got {[t.exit_reason for t in res.trades]}"
@@ -715,6 +896,7 @@ def test_exit_precedence_strategy_alert_over_time_stop_over_hold_cap(
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=1,
+        daily_context=_daily_context_before(bars),
     )
     assert res.trades
     # First exit after dte hits 0 should be strategy stop_loss, not time_stop/hold_cap
@@ -818,6 +1000,7 @@ def test_prior_day_spy_positive_allows_when_prior_rth_session_green(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=2,
+        daily_context=_daily_context_before(bars),
     )
     assert res.trades, "green RTH sessions should allow prior_day_spy_positive entries"
 
@@ -850,6 +1033,7 @@ def test_prior_day_spy_positive_blocks_with_fewer_than_two_completed_sessions(
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
     )
     # Warmup also blocks, but gate must not enter with <2 completed sessions before day
     assert res.trades == []
@@ -868,6 +1052,7 @@ def test_no_residual_end_of_series_liquidation(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
     )
     assert all(t.exit_reason != "end_of_series" for t in res.trades)
     residual_notes = [n for n in res.notes if "residual" in n.lower()]
@@ -931,6 +1116,7 @@ def test_off_session_final_bar_cannot_liquidate(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=None,
+        daily_context=_daily_context_before(bars),
     )
     for t in res.trades:
         exit_ts = datetime.fromisoformat(t.exit_ts).astimezone(ET)
@@ -988,6 +1174,7 @@ def test_utc_indexed_bars_convert_to_et_for_session_and_entry(tmp_path):
         iv_seed=0.18,
         source="fixture",
         max_hold_sessions=2,
+        daily_context=_daily_context_before(bars),
     )
     assert res.trades
     for t in res.trades:

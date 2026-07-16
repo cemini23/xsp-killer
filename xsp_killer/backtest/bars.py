@@ -6,6 +6,8 @@ verified UW cache entries and never receive fixture-backed data.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import logging
 import os
@@ -25,6 +27,8 @@ CACHE_DIR = ROOT / ".local" / "uw_cache"
 
 BarMode = Literal["fixture", "uw"]
 BarInterval = Literal["1d", "15m"]
+CACHE_CLOCK_SKEW = timedelta(minutes=5)
+"""Maximum tolerated provider/cache clock lead for ``fetched_at``."""
 
 
 def _safe_error(exc: Exception) -> str:
@@ -147,25 +151,27 @@ def _metadata_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.meta.json")
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
+            mode="wb",
             dir=path.parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
             delete=False,
         ) as handle:
-            handle.write(text)
+            handle.write(content)
             temp_path = Path(handle.name)
         temp_path.replace(path)
     finally:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink(missing_ok=True)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    _atomic_write_bytes(path, text.encode("utf-8"))
 
 
 def _write_cache(
@@ -186,7 +192,8 @@ def _write_cache(
     # first column is the index we reset
     ts_name = out.columns[0]
     out = out.rename(columns={ts_name: "ts"})
-    _atomic_write_text(path, out.to_csv(index=False))
+    csv_bytes = out.to_csv(index=False).encode("utf-8")
+    _atomic_write_bytes(path, csv_bytes)
     logger.info("uw cache wrote %s (%d rows)", path, len(out))
     if not writes_metadata:
         return
@@ -197,6 +204,7 @@ def _write_cache(
         "interval": interval,
         "first_bar": df.index[0].isoformat(),
         "last_bar": df.index[-1].isoformat(),
+        "csv_sha256": hashlib.sha256(csv_bytes).hexdigest(),
     }
     try:
         _atomic_write_text(
@@ -208,13 +216,32 @@ def _write_cache(
 
 
 def _read_cache(
-    path: Path, *, interval: BarInterval | None = None
+    path: Path,
+    *,
+    interval: BarInterval | None = None,
+    expected_sha256: str | None = None,
+    expected_first_bar: str | None = None,
+    expected_last_bar: str | None = None,
 ) -> pd.DataFrame | None:
     if not path.is_file():
         return None
     try:
-        df = pd.read_csv(path)
-        return _normalize_ohlc(df, interval=interval)
+        csv_bytes = path.read_bytes()
+        if expected_sha256 is not None:
+            actual_sha256 = hashlib.sha256(csv_bytes).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise ValueError("cache CSV SHA-256 does not match metadata")
+        df = pd.read_csv(io.BytesIO(csv_bytes))
+        normalized = _normalize_ohlc(df, interval=interval)
+        if expected_first_bar is not None:
+            actual_first = normalized.index[0].isoformat()
+            if actual_first != expected_first_bar:
+                raise ValueError("cache first_bar does not match metadata")
+        if expected_last_bar is not None:
+            actual_last = normalized.index[-1].isoformat()
+            if actual_last != expected_last_bar:
+                raise ValueError("cache last_bar does not match metadata")
+        return normalized
     except Exception as exc:  # noqa: BLE001 — fail-open
         logger.warning("uw cache read failed %s: %s", path, exc)
         return None
@@ -259,10 +286,20 @@ def _cache_status(
         )
         if not identity_matches:
             raise ValueError("cache metadata identity mismatch")
-        age = max(
-            timedelta(0),
-            datetime.now(timezone.utc) - fetched_at.astimezone(timezone.utc),
-        )
+        now = datetime.now(timezone.utc)
+        fetched_at_utc = fetched_at.astimezone(timezone.utc)
+        if fetched_at_utc > now + CACHE_CLOCK_SKEW:
+            raise ValueError(
+                "cache fetched_at exceeds tolerated 5-minute clock skew"
+            )
+        age = max(timedelta(0), now - fetched_at_utc)
+        if max_cache_age is not None:
+            for field in ("csv_sha256", "first_bar", "last_bar"):
+                if not metadata.get(field):
+                    raise ValueError(f"cache metadata missing {field}")
+            status["_expected_sha256"] = str(metadata["csv_sha256"])
+            status["_expected_first_bar"] = str(metadata["first_bar"])
+            status["_expected_last_bar"] = str(metadata["last_bar"])
         status["cache_metadata_present"] = True
         status["cache_age_hours"] = age.total_seconds() / 3600.0
         max_age = _max_age_delta(max_cache_age)
@@ -350,10 +387,30 @@ def load_uw_bars(
     )
     cache_allowed = max_cache_age is None or status["cache_fresh"] is True
     if use_cache and not refresh and cache_allowed:
-        cached = _read_cache(cache_p, interval=interval)
+        verify_identity = max_cache_age is not None
+        cached = _read_cache(
+            cache_p,
+            interval=interval,
+            expected_sha256=(
+                status.get("_expected_sha256") if verify_identity else None
+            ),
+            expected_first_bar=(
+                status.get("_expected_first_bar") if verify_identity else None
+            ),
+            expected_last_bar=(
+                status.get("_expected_last_bar") if verify_identity else None
+            ),
+        )
         if cached is not None and not cached.empty:
             logger.info("uw cache hit %s (%d rows)", cache_p.name, len(cached))
             status["cache_used"] = True
+            status["cache_identity_verified"] = bool(verify_identity)
+            for key in (
+                "_expected_sha256",
+                "_expected_first_bar",
+                "_expected_last_bar",
+            ):
+                status.pop(key, None)
             cached.attrs["uw_cache_status"] = status
             return cached
 
@@ -368,6 +425,8 @@ def load_uw_bars(
     df = _fetch_uw_history(ticker, period=period, interval=interval)
     if df is None or df.empty:
         return None
+    for key in ("_expected_sha256", "_expected_first_bar", "_expected_last_bar"):
+        status.pop(key, None)
     if use_cache:
         try:
             _write_cache(

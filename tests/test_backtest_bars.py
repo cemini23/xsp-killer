@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -40,6 +41,7 @@ def _write_metadata(
     period: str = "5y",
     interval: str = "1d",
 ) -> None:
+    csv_sha256 = hashlib.sha256(cache_path.read_bytes()).hexdigest()
     metadata = {
         "fetched_at": fetched_at.astimezone(timezone.utc).isoformat(),
         "ticker": ticker,
@@ -47,6 +49,7 @@ def _write_metadata(
         "interval": interval,
         "first_bar": "2026-07-13T00:00:00-04:00",
         "last_bar": "2026-07-15T00:00:00-04:00",
+        "csv_sha256": csv_sha256,
     }
     cache_path.with_name(f"{cache_path.name}.meta.json").write_text(
         json.dumps(metadata),
@@ -76,12 +79,14 @@ def test_write_cache_adds_secret_free_sidecar_metadata(monkeypatch, tmp_path):
         "interval",
         "first_bar",
         "last_bar",
+        "csv_sha256",
     }
     assert metadata["ticker"] == "SPY"
     assert metadata["period"] == "5y"
     assert metadata["interval"] == "1d"
     assert metadata["first_bar"].startswith("2026-07-13")
     assert metadata["last_bar"].startswith("2026-07-15")
+    assert metadata["csv_sha256"] == hashlib.sha256(cache_path.read_bytes()).hexdigest()
     datetime.fromisoformat(metadata["fetched_at"])
     assert secret not in metadata_path.read_text(encoding="utf-8")
 
@@ -155,6 +160,82 @@ def test_strict_stale_cache_fetch_failure_raises(monkeypatch, tmp_path):
             interval="1d",
             max_cache_age=timedelta(hours=24),
         )
+    assert len(fetched) == 1
+
+
+def test_strict_cache_rejects_csv_metadata_hash_mismatch(monkeypatch, tmp_path):
+    monkeypatch.setattr(bars_module, "CACHE_DIR", tmp_path)
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    cache_path = _cache_path("SPY", "5y", "1d")
+    _write_cache(
+        _daily_bars(501.0),
+        cache_path,
+        ticker="SPY",
+        period="5y",
+        interval="1d",
+    )
+    cache_path.write_bytes(cache_path.read_bytes().replace(b"501.0", b"509.0"))
+    fetched = []
+
+    def fail_fetch(*args, **kwargs):
+        fetched.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(bars_module, "_fetch_uw_history", fail_fetch)
+
+    with pytest.raises(FixtureFallbackError):
+        load_uw_bars_strict("SPY", period="5y", interval="1d")
+    assert len(fetched) == 1
+
+
+def test_strict_cache_rejects_first_last_bar_mismatch(monkeypatch, tmp_path):
+    monkeypatch.setattr(bars_module, "CACHE_DIR", tmp_path)
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    cache_path = _cache_path("SPY", "5y", "1d")
+    _write_cache(
+        _daily_bars(),
+        cache_path,
+        ticker="SPY",
+        period="5y",
+        interval="1d",
+    )
+    metadata_path = cache_path.with_name(f"{cache_path.name}.meta.json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["last_bar"] = "2026-07-14T00:00:00-04:00"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    monkeypatch.setattr(bars_module, "_fetch_uw_history", lambda *a, **k: None)
+
+    with pytest.raises(FixtureFallbackError):
+        load_uw_bars_strict("SPY", period="5y", interval="1d")
+
+
+def test_strict_cache_rejects_fetched_at_beyond_clock_skew(monkeypatch, tmp_path):
+    monkeypatch.setattr(bars_module, "CACHE_DIR", tmp_path)
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    cache_path = _cache_path("SPY", "5y", "1d")
+    _write_cache(
+        _daily_bars(),
+        cache_path,
+        ticker="SPY",
+        period="5y",
+        interval="1d",
+    )
+    metadata_path = cache_path.with_name(f"{cache_path.name}.meta.json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["fetched_at"] = (
+        datetime.now(timezone.utc) + timedelta(minutes=6)
+    ).isoformat()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    fetched = []
+
+    def fail_fetch(*args, **kwargs):
+        fetched.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(bars_module, "_fetch_uw_history", fail_fetch)
+
+    with pytest.raises(FixtureFallbackError):
+        load_uw_bars_strict("SPY", period="5y", interval="1d")
     assert len(fetched) == 1
 
 

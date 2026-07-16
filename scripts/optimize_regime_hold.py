@@ -196,15 +196,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow Stage A grid size above the default budget",
     )
-    p.add_argument(
+    uw_policy = p.add_mutually_exclusive_group()
+    uw_policy.add_argument(
         "--allow-fixture-fallback",
         action="store_true",
         help="Research override: allow UW mode to fall back to fixtures",
     )
-    p.add_argument(
+    uw_policy.add_argument(
         "--require-uw",
         action="store_true",
-        help="Deprecated compatibility alias; UW mode is already strict",
+        help="Deprecated compatibility alias; forces --mode uw strict loading",
     )
     p.add_argument(
         "--refresh-uw",
@@ -674,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.max_cache_age_hours < 0:
         raise SystemExit("--max-cache-age-hours must be non-negative")
+    if args.require_uw:
+        args.mode = "uw"
     args.strict_uw = args.mode == "uw" and (
         bool(args.require_uw) or not bool(args.allow_fixture_fallback)
     )

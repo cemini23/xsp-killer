@@ -1674,6 +1674,74 @@ def test_cli_uw_fails_without_key_no_report_by_default(tmp_path, compat_args):
     assert "wrote " not in combined
 
 
+def test_cli_require_uw_without_mode_cannot_write_fixture_report(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "reports_require_uw"
+    env = {
+        **os.environ,
+        "UNUSUAL_WHALES_API_KEY": "",
+        "PYTHONUTF8": "1",
+        "XSP_UW_TIPDROP_ROOT": str(tmp_path / "no_tipdrop"),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--require-uw",
+            "--stage-a",
+            "--ticker",
+            "SPY_TEST_NO_CACHE",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert not list(out.glob("*.json"))
+    assert not list(out.glob("*.md"))
+    assert "wrote " not in (proc.stdout + proc.stderr).lower()
+
+
+def test_cli_require_uw_rejects_fixture_fallback_override(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "reports_conflicting_uw_flags"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--require-uw",
+            "--allow-fixture-fallback",
+            "--stage-a",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        env={**os.environ, "PYTHONUTF8": "1"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert proc.returncode != 0
+    assert not list(out.glob("*.json"))
+    assert "not allowed with argument" in (proc.stdout + proc.stderr).lower()
+
+
 def test_cli_uw_fixture_fallback_requires_explicit_override(tmp_path):
     import json
     import os

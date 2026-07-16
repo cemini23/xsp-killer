@@ -205,6 +205,100 @@ def test_max_hold_sessions_forces_exit(tmp_path):
     assert all(t.bar_interval == "1d" for t in capped)
 
 
+def _dte_at_exit(trade) -> int:
+    """Calendar DTE remaining on the exit bar (engine force-expiry axis)."""
+    entry = datetime.fromisoformat(trade.entry_ts)
+    exit_ = datetime.fromisoformat(trade.exit_ts)
+    exp = entry.date() + timedelta(days=int(trade.dte_at_entry))
+    return max(0, (exp - exit_.date()).days)
+
+
+def test_take_profit_precedes_expiry_time_stop(tmp_path):
+    """Strategy take_profit wins when dte<=0 would also force time_stop."""
+    bars = _green_uptrend(75, step=2.0)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.15,
+        stop_loss_pct=0.90,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(bars, rules, variant_id="tp_vs_expiry", iv_seed=0.20)
+    winners = [
+        t for t in res.trades if t.exit_reason == "take_profit" and _dte_at_exit(t) == 0
+    ]
+    assert winners, (
+        f"expected take_profit on expiry bar (dte=0); got "
+        f"{[(t.exit_reason, _dte_at_exit(t), t.net_pnl_pct) for t in res.trades[:8]]}"
+    )
+    assert all(t.exit_reason == "take_profit" for t in winners)
+    assert not any(t.exit_reason == "time_stop" for t in winners)
+
+
+def test_stop_loss_precedes_expiry_time_stop(tmp_path):
+    """Strategy stop_loss wins when dte<=0 would also force time_stop."""
+    n_warm = 58
+    up = [400.0 + i * 1.5 for i in range(n_warm)]
+    peak = up[-1]
+    # Entry while still GREEN, then a sharp next-session crash into expiry.
+    series = up + [peak + 1.0, peak * 0.90, peak * 0.88, peak * 0.87, peak * 0.86]
+    bars = _ohlc_frame(series)
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=0.99,
+        stop_loss_pct=0.10,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(bars, rules, variant_id="sl_vs_expiry", iv_seed=0.20)
+    winners = [
+        t for t in res.trades if t.exit_reason == "stop_loss" and _dte_at_exit(t) == 0
+    ]
+    assert winners, (
+        f"expected stop_loss on expiry bar (dte=0); got "
+        f"{[(t.exit_reason, _dte_at_exit(t), t.net_pnl_pct) for t in res.trades]}"
+    )
+    assert all(t.exit_reason == "stop_loss" for t in winners)
+    assert not any(t.exit_reason == "time_stop" for t in winners)
+
+
+def test_expiry_time_stop_precedes_hold_cap(tmp_path):
+    """Engine expiry force (dte<=0 time_stop) wins over max_hold_sessions hold_cap."""
+    n_warm = 55
+    up = [400.0 + i * 1.2 for i in range(n_warm)]
+    peak = up[-1]
+    flat = [peak + (0.02 if i % 2 == 0 else -0.02) for i in range(25)]
+    bars = _ohlc_frame(up + flat)
+    # Extreme TP/SL so strategy alerts stay quiet; dte=1 and hold=1 collide.
+    rules = _rules(
+        tmp_path,
+        take_profit_pct=5.0,
+        stop_loss_pct=5.0,
+        dte_min=1,
+        dte_target=1,
+    )
+    res = run_backtest(
+        bars,
+        rules,
+        variant_id="expiry_vs_hold",
+        iv_seed=0.18,
+        max_hold_sessions=1,
+    )
+    collided = [
+        t
+        for t in res.trades
+        if t.exit_reason != "end_of_series"
+        and _dte_at_exit(t) == 0
+        and t.bars_held >= 1
+    ]
+    assert collided, "expected closed trades at dte=0 with hold_cap also eligible"
+    assert all(t.exit_reason == "time_stop" for t in collided), (
+        f"expected time_stop over hold_cap, got "
+        f"{sorted({t.exit_reason for t in collided})}"
+    )
+    assert not any(t.exit_reason == "hold_cap" for t in res.trades)
+
+
 def test_determinism_same_fixture(tmp_path):
     bars = load_fixture_daily()
     rules = _rules(tmp_path, take_profit_pct=0.15, stop_loss_pct=0.25)
@@ -228,12 +322,8 @@ def test_reuses_real_evaluate_exit_alerts_and_economics(tmp_path, monkeypatch):
         calls["entry_fill"] += 1
         return real_entry_fill(*args, **kwargs)
 
-    monkeypatch.setattr(
-        "xsp_killer.backtest.engine.evaluate_exit_alerts", spy_eval
-    )
-    monkeypatch.setattr(
-        "xsp_killer.backtest.engine.entry_fill_premium", spy_fill
-    )
+    monkeypatch.setattr("xsp_killer.backtest.engine.evaluate_exit_alerts", spy_eval)
+    monkeypatch.setattr("xsp_killer.backtest.engine.entry_fill_premium", spy_fill)
 
     bars = _green_uptrend(70, step=1.5)
     rules = _rules(tmp_path, take_profit_pct=0.12)
@@ -293,9 +383,10 @@ def test_cli_fixture_mode_offline(tmp_path):
     mds = list(out.glob("lane_a_bt_*.md"))
     assert jsons, "expected json report"
     assert mds, "expected markdown report"
-    assert "Ranked table" in mds[0].read_text(encoding="utf-8") or "mean" in mds[
-        0
-    ].read_text(encoding="utf-8").lower()
+    assert (
+        "Ranked table" in mds[0].read_text(encoding="utf-8")
+        or "mean" in mds[0].read_text(encoding="utf-8").lower()
+    )
 
 
 def test_cli_uw_mode_no_key_exit_zero(tmp_path):

@@ -41,11 +41,16 @@ def test_load_variant_specs():
     assert "v2_yellow_top_quartile_bounce" in ids
     assert "v2_yellow_mid_bounce" in ids
     active_ids = {s.variant_id for s in specs if s.active}
-    # 12 keepers + 55dte OTM + mid-tenor Lane A⅔; capacity via green_day prune
-    assert len(active_ids) == 13
+    # 2026-07-16 UW BT: dip-swing grid pruned; 28 DTE ATM cluster + 14dte + stack3 + mid-tenor
+    assert len(active_ids) == 6
+    assert "v2_28dte_atm" in active_ids
+    assert "v2_28dte_easy_tp" in active_ids
     assert "v2_yellow_mid_bounce" in active_ids
-    assert "v2_dip_swing_55dte_otm" in active_ids
+    assert "v2_14dte_atm" in active_ids
+    assert "v2_28dte_atm_stack3" in active_ids
     assert "v2_mid_tenor_80dte_atm" in active_ids
+    assert "v2_dip_swing_55dte_otm" not in active_ids
+    assert "v2_dip_swing_14dte" not in active_ids
     assert "v2_28dte_green_day" not in active_ids
     assert "v2_dip_swing_50dte_otm" not in active_ids
     assert "v2_yellow_top_quartile_bounce" not in active_ids
@@ -104,8 +109,9 @@ def test_merged_rules_stack3_variant(tmp_path):
 def test_merged_rules_operator_target_dte_stagger(tmp_path):
     """45–60 DTE OTM stagger grid matches operator dip-swing profile.
 
-    v9 P2 #15: only 55dte OTM re-enabled as single far-DTE shadow; 45/50/60 stay off.
-    55/60 carry variant-only dte_max=65 so next Friday beyond baseline 60 is eligible.
+    All far-DTE OTM stay inactive after 2026-07-16 UW BT prune (55 was briefly
+    re-enabled 2026-07-15). 55/60 still carry variant-only dte_max=65 for a
+    future re-enable without Friday collision under baseline 60.
     """
     import yaml
 
@@ -118,10 +124,7 @@ def test_merged_rules_operator_target_dte_stagger(tmp_path):
     }
     for dte, vid in targets.items():
         spec = next(s for s in specs if s.variant_id == vid)
-        if dte == 55:
-            assert spec.active is True
-        else:
-            assert not spec.active
+        assert not spec.active
         data = yaml.safe_load(
             merged_rules_path(spec, tmp_dir=tmp_path).read_text(encoding="utf-8")
         )

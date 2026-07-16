@@ -3,7 +3,8 @@
 # still runs via lane_a_rules.yaml + systemd.
 # Scoreboard: briefs/xsp-lane-a-variants-scoreboard.json
 #
-# Capacity (8GB VPS): ~12 variants ≈ 30s + ~150MB peak at 15:45 entry; safe headroom.
+# Capacity (8GB VPS): ~6 active after 2026-07-16 UW BT prune (dip-swing grid off).
+# Soak focus: 28 DTE ATM trio (atm / easy_tp / yellow_mid_bounce). LIVE untouched.
 
 variants:
   # --- DTE axis (ATM, no BB gate on TP) ---
@@ -247,7 +248,7 @@ variants:
   # strength at +40% option profit, cut at -50%, force-close only near expiry.
   # Runs intraday (every 15m RTH) so it catches dips + pops when they happen.
   v2_dip_swing_14dte:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT mean −40% (MCPT fail); free capacity for 28 DTE ATM soak
     description: "Dip-bounce entry (any regime), near-ATM ~14 DTE, hold to recovery: TP +40% / SL -50% / near-expiry cut"
     overrides:
       logging:
@@ -277,7 +278,7 @@ variants:
 
   # More runway: ~21 DTE gives the recovery two extra weeks, less gamma.
   v2_dip_swing_21dte:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT mean −36% (MCPT fail); capacity → 28 DTE ATM cluster
     description: "Dip-swing, ~21 DTE ATM, TP +40% / SL -50%"
     overrides:
       logging:
@@ -331,7 +332,7 @@ variants:
 
   # Fast scalp: bank quick pops at +25%, higher turnover.
   v2_dip_swing_14dte_tp25:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT mean −31% (best dip, still MCPT fail)
     description: "Dip-swing, ~14 DTE ATM, quick TP +25% / SL -50%"
     overrides:
       logging:
@@ -357,7 +358,7 @@ variants:
 
   # Let winners run: +60% target, wider -60% stop.
   v2_dip_swing_14dte_tp60:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT mean −36% (MCPT fail)
     description: "Dip-swing, ~14 DTE ATM, TP +60% / SL -60%"
     overrides:
       logging:
@@ -409,7 +410,7 @@ variants:
 
   # Cheap leverage: one strike OTM, ~21 DTE, wider targets for the bigger swing.
   v2_dip_swing_21dte_otm:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT worst mean −50% (MCPT fail)
     description: "Dip-swing, ~21 DTE one-strike OTM, TP +50% / SL -60%"
     overrides:
       logging:
@@ -496,7 +497,7 @@ variants:
   # under session-open exits. Leave 45/50/60 inactive so DTE is not confounded
   # with multi-bucket capacity load. 55 preferred over 50 as operator target.
   v2_dip_swing_55dte_otm:
-    active: true  # re-enabled 2026-07-15: single 50–55 DTE OTM shadow (operator thesis)
+    active: false  # pruned 2026-07-16: UW Lane A BT mean −44% / worst total $ (MCPT fail); was re-enabled 2026-07-15
     description: "Operator target: dip-swing ~55 DTE one-strike OTM, 2ct, TP +40% / SL -50%"
     overrides:
       logging:
@@ -586,7 +587,7 @@ variants:
   # The traded position is still the naked long call today — the shadow measures
   # whether the spread is worth wiring into the full multi-leg lifecycle.
   v2_dip_swing_14dte_spread:
-    active: true
+    active: false  # pruned 2026-07-16: UW Lane A BT mirrors 14dte flagship (−40%); soak paused with dip grid
     description: "Dip-swing ~14 DTE ATM + debit-spread shadow (2-strike width); measures spread economics"
     overrides:
       logging:

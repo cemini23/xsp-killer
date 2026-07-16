@@ -1,13 +1,16 @@
 """OHLC bar loaders: committed fixtures or UW (TipDrop) with local cache.
 
-Fail-open: UW mode without key / import / empty frame falls back to fixture.
-Cache lives under ``.local/uw_cache/`` (gitignored via ``.local/``).
+Regular loading remains fail-open. Strict callers can require fresh, metadata-
+verified UW cache entries and never receive fixture-backed data.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,6 +25,12 @@ CACHE_DIR = ROOT / ".local" / "uw_cache"
 
 BarMode = Literal["fixture", "uw"]
 BarInterval = Literal["1d", "15m"]
+
+
+def _safe_error(exc: Exception) -> str:
+    message = str(exc)
+    secret = os.getenv("UNUSUAL_WHALES_API_KEY", "").strip()
+    return message.replace(secret, "REDACTED") if secret else message
 
 
 class FixtureFallbackError(RuntimeError):
@@ -134,15 +143,68 @@ def _cache_path(ticker: str, period: str, interval: str) -> Path:
     return CACHE_DIR / _cache_key(ticker, period, interval)
 
 
-def _write_cache(df: pd.DataFrame, path: Path) -> None:
+def _metadata_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.meta.json")
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(text)
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+def _write_cache(
+    df: pd.DataFrame,
+    path: Path,
+    *,
+    ticker: str | None = None,
+    period: str | None = None,
+    interval: str | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writes_metadata = ticker is not None and period is not None and interval is not None
+    if writes_metadata:
+        # Never let metadata for an older CSV authenticate a newly replaced CSV.
+        _metadata_path(path).unlink(missing_ok=True)
     out = df.copy()
     out = out.reset_index()
     # first column is the index we reset
     ts_name = out.columns[0]
     out = out.rename(columns={ts_name: "ts"})
-    out.to_csv(path, index=False)
+    _atomic_write_text(path, out.to_csv(index=False))
     logger.info("uw cache wrote %s (%d rows)", path, len(out))
+    if not writes_metadata:
+        return
+    metadata = {
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "ticker": ticker,
+        "period": period,
+        "interval": interval,
+        "first_bar": df.index[0].isoformat(),
+        "last_bar": df.index[-1].isoformat(),
+    }
+    try:
+        _atomic_write_text(
+            _metadata_path(path),
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        )
+    except OSError as exc:
+        logger.warning("uw cache metadata write failed %s: %s", path, exc)
 
 
 def _read_cache(
@@ -158,6 +220,60 @@ def _read_cache(
         return None
 
 
+def _max_age_delta(value: timedelta | float | int | None) -> timedelta | None:
+    if value is None:
+        return None
+    if isinstance(value, timedelta):
+        return value
+    return timedelta(hours=float(value))
+
+
+def _cache_status(
+    path: Path,
+    *,
+    ticker: str,
+    period: str,
+    interval: str,
+    max_cache_age: timedelta | float | int | None,
+    refresh: bool,
+) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "cache_used": False,
+        "cache_fresh": None,
+        "cache_age_hours": None,
+        "cache_metadata_present": False,
+        "refresh_requested": bool(refresh),
+    }
+    if refresh:
+        return status
+    metadata_path = _metadata_path(path)
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        fetched_at = datetime.fromisoformat(str(metadata["fetched_at"]))
+        if fetched_at.tzinfo is None:
+            raise ValueError("fetched_at must include timezone")
+        identity_matches = (
+            metadata.get("ticker") == ticker
+            and metadata.get("period") == period
+            and metadata.get("interval") == interval
+        )
+        if not identity_matches:
+            raise ValueError("cache metadata identity mismatch")
+        age = max(
+            timedelta(0),
+            datetime.now(timezone.utc) - fetched_at.astimezone(timezone.utc),
+        )
+        status["cache_metadata_present"] = True
+        status["cache_age_hours"] = age.total_seconds() / 3600.0
+        max_age = _max_age_delta(max_cache_age)
+        status["cache_fresh"] = None if max_age is None else age <= max_age
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        logger.info("uw cache metadata unavailable/stale %s: %s", metadata_path, exc)
+        if max_cache_age is not None:
+            status["cache_fresh"] = False
+    return status
+
+
 def _get_uw_provider() -> Any | None:
     """Mirror ``uw_shadow._get_provider`` — TipDrop UnusualWhalesProvider or None."""
     try:
@@ -165,7 +281,7 @@ def _get_uw_provider() -> Any | None:
 
         return _get_provider()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("uw provider import failed (fail-open): %s", exc)
+        logger.warning("uw provider import failed (fail-open): %s", _safe_error(exc))
         return None
 
 
@@ -187,7 +303,9 @@ def _fetch_uw_history(
         else:
             raw = provider.get_intraday(ticker, "15m", period)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("UW fetch failed %s %s: %s", ticker, interval, exc)
+        logger.warning(
+            "UW fetch failed %s %s: %s", ticker, interval, _safe_error(exc)
+        )
         return None
 
     if raw is None:
@@ -203,7 +321,7 @@ def _fetch_uw_history(
             return None
         return _normalize_ohlc(df, interval=interval)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("UW frame normalize failed: %s", exc)
+        logger.warning("UW frame normalize failed: %s", _safe_error(exc))
         return None
 
 
@@ -213,13 +331,30 @@ def load_uw_bars(
     period: str = "2y",
     interval: BarInterval = "1d",
     use_cache: bool = True,
+    max_cache_age: timedelta | float | int | None = None,
+    refresh: bool = False,
 ) -> pd.DataFrame | None:
-    """Fetch UW OHLC, caching under ``.local/uw_cache/``. Returns None on failure."""
+    """Fetch UW OHLC, caching under ``.local/uw_cache/``. Returns None on failure.
+
+    ``max_cache_age`` accepts a timedelta or hours. Its default preserves the
+    historical behavior: cache CSVs are accepted even without metadata.
+    """
     cache_p = _cache_path(ticker, period, interval)
-    if use_cache:
+    status = _cache_status(
+        cache_p,
+        ticker=ticker,
+        period=period,
+        interval=interval,
+        max_cache_age=max_cache_age,
+        refresh=refresh,
+    )
+    cache_allowed = max_cache_age is None or status["cache_fresh"] is True
+    if use_cache and not refresh and cache_allowed:
         cached = _read_cache(cache_p, interval=interval)
         if cached is not None and not cached.empty:
             logger.info("uw cache hit %s (%d rows)", cache_p.name, len(cached))
+            status["cache_used"] = True
+            cached.attrs["uw_cache_status"] = status
             return cached
 
     # Honor explicit empty key as fail-open without network
@@ -234,7 +369,25 @@ def load_uw_bars(
     if df is None or df.empty:
         return None
     if use_cache:
-        _write_cache(df, cache_p)
+        try:
+            _write_cache(
+                df,
+                cache_p,
+                ticker=ticker,
+                period=period,
+                interval=interval,
+            )
+        except OSError as exc:
+            logger.warning("uw cache write failed %s: %s", cache_p, exc)
+    status.update(
+        {
+            "cache_used": False,
+            "cache_fresh": True,
+            "cache_age_hours": 0.0,
+            "cache_metadata_present": _metadata_path(cache_p).is_file(),
+        }
+    )
+    df.attrs["uw_cache_status"] = status
     return df
 
 
@@ -246,6 +399,8 @@ def load_uw_bars_strict(
     use_cache: bool = True,
     min_bars: int = 1,
     min_sessions: int = 0,
+    max_cache_age: timedelta | float | int | None = timedelta(hours=24),
+    refresh: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Load true UW OHLC only — never return fixtures.
 
@@ -267,7 +422,12 @@ def load_uw_bars_strict(
         )
 
     df = load_uw_bars(
-        ticker, period=period, interval=interval, use_cache=use_cache
+        ticker,
+        period=period,
+        interval=interval,
+        use_cache=use_cache,
+        max_cache_age=max_cache_age,
+        refresh=refresh,
     )
     if df is None or df.empty:
         raise FixtureFallbackError(
@@ -298,6 +458,7 @@ def load_uw_bars_strict(
             "end": end.isoformat() if hasattr(end, "isoformat") else str(end),
             "interval": "1d",
         }
+    coverage.update(df.attrs.get("uw_cache_status") or {})
 
     n_bars = int(coverage.get("n_bars") or 0)
     n_sessions = int(coverage.get("n_sessions") or 0)
@@ -324,6 +485,8 @@ def load_bars(
     end: str | None = None,
     fixture_daily: Path | None = None,
     fixture_intraday: Path | None = None,
+    max_cache_age: timedelta | float | int | None = None,
+    refresh: bool = False,
 ) -> tuple[pd.DataFrame, str]:
     """Load OHLC bars.
 
@@ -332,7 +495,13 @@ def load_bars(
     """
     source = "fixture"
     if mode == "uw":
-        df = load_uw_bars(ticker, period=period, interval=interval)
+        df = load_uw_bars(
+            ticker,
+            period=period,
+            interval=interval,
+            max_cache_age=max_cache_age,
+            refresh=refresh,
+        )
         if df is not None and not df.empty:
             source = "uw"
         else:

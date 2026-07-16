@@ -8,7 +8,7 @@ Never flips LIVE_ENTRIES / LIVE_EXITS. Never writes secrets or auto-edits
 ``config/lane_a_variants.yaml``. Emitted YAML is always ``active: false``.
 
 Offline:  ``python scripts/optimize_regime_hold.py --mode fixture``
-Strict:   ``python scripts/optimize_regime_hold.py --mode uw --require-uw ...``
+Strict:   ``python scripts/optimize_regime_hold.py --mode uw ...``
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=("fixture", "uw"),
         default="fixture",
-        help="Data source (uw with --require-uw never falls back to fixture)",
+        help="Data source (--mode uw is strict by default)",
     )
     p.add_argument(
         "--stage-a",
@@ -197,9 +197,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow Stage A grid size above the default budget",
     )
     p.add_argument(
+        "--allow-fixture-fallback",
+        action="store_true",
+        help="Research override: allow UW mode to fall back to fixtures",
+    )
+    p.add_argument(
         "--require-uw",
         action="store_true",
-        help="Fail nonzero if UW unavailable/insufficient (no fixture report)",
+        help="Deprecated compatibility alias; UW mode is already strict",
+    )
+    p.add_argument(
+        "--refresh-uw",
+        action="store_true",
+        help="Bypass UW caches and fetch fresh bars",
+    )
+    p.add_argument(
+        "--max-cache-age-hours",
+        type=float,
+        default=24.0,
+        help="Strict UW cache freshness limit in hours (default 24)",
     )
     p.add_argument(
         "--min-intraday-bars",
@@ -391,6 +407,12 @@ def _report_to_markdown(payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"- generated_at: `{payload.get('generated_at')}`")
     lines.append(f"- mode: `{payload.get('mode')}`")
+    lines.append(f"- strict_uw: `{payload.get('strict_uw')}`")
+    args_block = payload.get("args") or {}
+    lines.append(
+        f"- UW cache: max_age_hours={args_block.get('max_cache_age_hours')} "
+        f"refresh={args_block.get('refresh_uw')}"
+    )
     rec_status = (payload.get("recommendation") or {}).get("status")
     lines.append(f"- recommendation: **{rec_status}**")
     lines.append("")
@@ -415,6 +437,13 @@ def _report_to_markdown(payload: dict[str, Any]) -> str:
                 f"- coverage: {cov.get('start')} → {cov.get('end')} "
                 f"n_bars={cov.get('n_bars')} n_sessions={cov.get('n_sessions')}"
             )
+            if "cache_fresh" in cov:
+                lines.append(
+                    f"- cache: used={cov.get('cache_used')} "
+                    f"fresh={cov.get('cache_fresh')} "
+                    f"age_hours={cov.get('cache_age_hours')} "
+                    f"refresh={cov.get('refresh_requested')}"
+                )
         lines.append(f"- disclaimer: {sa.get('disclaimer', '')}")
         lines.append("")
         ranking = sa.get("ranking") or []
@@ -473,6 +502,13 @@ def _report_to_markdown(payload: dict[str, Any]) -> str:
             f"phases={cov.get('session_phases_observed')} "
             f"overnight={cov.get('has_overnight_bars')}"
         )
+        if "cache_fresh" in cov:
+            lines.append(
+                f"- cache: used={cov.get('cache_used')} "
+                f"fresh={cov.get('cache_fresh')} "
+                f"age_hours={cov.get('cache_age_hours')} "
+                f"refresh={cov.get('refresh_requested')}"
+            )
         if sb.get("overnight_unvalidated"):
             lines.append(
                 "- **Note:** coverage lacks GTH/Curb — overnight/session-edge "
@@ -550,7 +586,7 @@ def _daily_coverage(bars: Any, interval: str = "1d") -> dict[str, Any]:
     start = bars.index[0]
     end = bars.index[-1]
     n_sess = int(bars.index.normalize().nunique())
-    return {
+    coverage = {
         "n_bars": int(len(bars)),
         "n_sessions": n_sess,
         "start": start.isoformat() if hasattr(start, "isoformat") else str(start),
@@ -559,45 +595,53 @@ def _daily_coverage(bars: Any, interval: str = "1d") -> dict[str, Any]:
         "has_overnight_bars": False,
         "session_phases_observed": ["daily"],
     }
+    coverage.update(bars.attrs.get("uw_cache_status") or {})
+    return coverage
 
 
 def _load_daily(
     args: argparse.Namespace,
 ) -> tuple[Any, str, dict[str, Any]]:
-    """Return (bars, source, coverage). Raises on --require-uw failure."""
-    if args.mode == "uw" and args.require_uw:
+    """Return bars, source, and coverage under the selected UW policy."""
+    if args.mode == "uw" and args.strict_uw:
         bars, cov = load_uw_bars_strict(
             args.ticker,
             period=args.period,
             interval="1d",
             min_bars=max(50, int(args.min_trades) * 2),
             min_sessions=0,
+            max_cache_age=float(args.max_cache_age_hours),
+            refresh=bool(args.refresh_uw),
         )
+        cov["strict_uw"] = True
         return bars, "uw", cov
     bars, source = load_bars(
         mode=args.mode,
         interval="1d",
         ticker=args.ticker,
         period=args.period,
+        refresh=bool(args.refresh_uw),
     )
-    if args.require_uw and source != "uw":
-        raise FixtureFallbackError(
-            f"--require-uw but daily source={source} (fixture fallback refused)"
-        )
-    return bars, source, _daily_coverage(bars, "1d")
+    coverage = _daily_coverage(bars, "1d")
+    coverage["strict_uw"] = bool(args.strict_uw)
+    coverage.setdefault("refresh_requested", bool(args.refresh_uw))
+    return bars, source, coverage
 
 
 def _load_intraday(
     args: argparse.Namespace,
 ) -> tuple[Any, str, dict[str, Any]]:
-    if args.mode == "uw" and args.require_uw:
+    if args.mode == "uw" and args.strict_uw:
         bars, cov = load_uw_bars_strict(
             args.ticker,
             period=args.intraday_period,
             interval="15m",
             min_bars=int(args.min_intraday_bars),
             min_sessions=int(args.min_intraday_sessions),
+            max_cache_age=float(args.max_cache_age_hours),
+            refresh=bool(args.refresh_uw),
         )
+        cov["strict_uw"] = True
         return bars, "uw", cov
     if args.mode == "uw":
         bars, source = load_bars(
@@ -605,12 +649,12 @@ def _load_intraday(
             interval="15m",
             ticker=args.ticker,
             period=args.intraday_period,
+            refresh=bool(args.refresh_uw),
         )
-        if args.require_uw and source != "uw":
-            raise FixtureFallbackError(
-                f"--require-uw but intraday source={source}"
-            )
         cov = bar_coverage(bars)
+        cov.update(bars.attrs.get("uw_cache_status") or {})
+        cov["strict_uw"] = bool(args.strict_uw)
+        cov.setdefault("refresh_requested", bool(args.refresh_uw))
         if source == "uw":
             assert_intraday_coverage(
                 bars,
@@ -621,11 +665,18 @@ def _load_intraday(
     # fixture mode
     bars, source = load_bars(mode="fixture", interval="15m", ticker=args.ticker)
     cov = bar_coverage(bars)
+    cov["strict_uw"] = False
+    cov["refresh_requested"] = False
     return bars, source, cov
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.max_cache_age_hours < 0:
+        raise SystemExit("--max-cache-age-hours must be non-negative")
+    args.strict_uw = args.mode == "uw" and (
+        bool(args.require_uw) or not bool(args.allow_fixture_fallback)
+    )
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
@@ -639,10 +690,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "uw":
         _load_uw_key_from_tipdrop()
+    if args.require_uw:
+        logger.warning("--require-uw is deprecated; UW mode is strict by default")
 
     payload: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": args.mode,
+        "strict_uw": bool(args.strict_uw),
         "kind": "regime_hold_optimizer",
         "pricing_fidelity": "modeled_bs_lite",
         "disclaimer": (
@@ -661,6 +715,9 @@ def main(argv: list[str] | None = None) -> int:
             "mcpt": bool(args.mcpt),
             "coarse_to_fine": bool(args.coarse_to_fine),
             "require_uw": bool(args.require_uw),
+            "allow_fixture_fallback": bool(args.allow_fixture_fallback),
+            "refresh_uw": bool(args.refresh_uw),
+            "max_cache_age_hours": float(args.max_cache_age_hours),
             "stage_a": run_a,
             "stage_b": run_b,
         },

@@ -1628,8 +1628,9 @@ def test_cli_fixture_stage_a_and_b_offline(tmp_path):
     )
 
 
-def test_cli_uw_require_uw_fails_without_key_no_report(tmp_path):
-    """--mode uw --require-uw with empty key exits nonzero; no deceptive report."""
+@pytest.mark.parametrize("compat_args", [[], ["--require-uw"]])
+def test_cli_uw_fails_without_key_no_report_by_default(tmp_path, compat_args):
+    """UW is strict by default; the deprecated alias preserves that assertion."""
     import os
     import subprocess
     import sys
@@ -1647,7 +1648,7 @@ def test_cli_uw_require_uw_fails_without_key_no_report(tmp_path):
             str(ROOT / "scripts" / "optimize_regime_hold.py"),
             "--mode",
             "uw",
-            "--require-uw",
+            *compat_args,
             "--stage-a",
             "--period",
             "5y",
@@ -1671,6 +1672,57 @@ def test_cli_uw_require_uw_fails_without_key_no_report(tmp_path):
     assert "can't open file" not in combined
     # must not claim a successful write
     assert "wrote " not in combined
+
+
+def test_cli_uw_fixture_fallback_requires_explicit_override(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    out = tmp_path / "reports_uw_fallback"
+    env = {
+        **os.environ,
+        "UNUSUAL_WHALES_API_KEY": "",
+        "PYTHONUTF8": "1",
+        "XSP_UW_TIPDROP_ROOT": str(tmp_path / "no_tipdrop"),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "optimize_regime_hold.py"),
+            "--mode",
+            "uw",
+            "--allow-fixture-fallback",
+            "--stage-a",
+            "--ticker",
+            "SPY_TEST_NO_CACHE",
+            "--min-trades",
+            "1",
+            "--top-k",
+            "1",
+            "--no-coarse-to-fine",
+            "--out",
+            str(out),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    report = next(out.glob("regime_hold_*.json"))
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["strict_uw"] is False
+    assert payload["stage_a"]["source"] == "fixture_fallback"
+    assert payload["stage_a"]["coverage"]["strict_uw"] is False
+    assert payload["stage_a"]["coverage"]["refresh_requested"] is False
+    combined = proc.stdout + proc.stderr + report.read_text(encoding="utf-8")
+    assert "uw-test-secret-never-log" not in combined
 
 
 def test_cli_help_lists_required_flags():
@@ -1708,7 +1760,10 @@ def test_cli_help_lists_required_flags():
         "--mcpt-perm",
         "--coarse-to-fine",
         "--allow-large",
+        "--allow-fixture-fallback",
         "--require-uw",
+        "--refresh-uw",
+        "--max-cache-age-hours",
         "--min-intraday-bars",
         "--min-intraday-sessions",
         "--out",

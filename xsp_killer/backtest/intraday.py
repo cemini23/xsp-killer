@@ -28,12 +28,17 @@ from xsp_killer.backtest.engine import (
     _ta_entry_ok_at,
     _ta_signal_at,
 )
-from xsp_killer.backtest.option_model import synthesize_call_premium
+from xsp_killer.backtest.option_model import (
+    debit_spread_mark,
+    synthesize_call_premium,
+    synthesize_debit_spread,
+)
 from xsp_killer.backtest.variants import entry_knobs_from_rules_dict
 from xsp_killer.backtest.volume_gate import (
     prior_day_volume_percentile,
     volume_gate_allows,
 )
+from xsp_killer.debit_spread import select_short_strike
 from xsp_killer.lane_a_monitor import (
     LaneAPosition,
     LaneRules,
@@ -409,6 +414,46 @@ class _OpenPos:
     regime_at_entry: str | None
     dte_at_entry: int
     early_green: bool = False
+    structure_mode: str = "naked"
+    short_strike: float | None = None
+    width_points: float | None = None
+
+
+def _mark_open_position(
+    spy: float,
+    *,
+    op: _OpenPos,
+    dte: int,
+    iv_seed: float,
+    premium_scale: float,
+    use_bs: bool,
+) -> float:
+    """Single-leg or dual-leg BS-lite mark in the active premium scale."""
+    pos = op.position
+    if (
+        op.structure_mode == "debit_spread"
+        and op.short_strike is not None
+        and op.width_points is not None
+    ):
+        _long_m, _short_m, value = debit_spread_mark(
+            spy,
+            long_strike=pos.strike,
+            short_strike=op.short_strike,
+            width_points=op.width_points,
+            dte=dte,
+            iv=iv_seed,
+            premium_scale=premium_scale,
+            use_bs=use_bs,
+        )
+        return value
+    return synthesize_call_premium(
+        spy,
+        xsp_strike=pos.strike,
+        dte=dte,
+        iv=iv_seed,
+        premium_scale=premium_scale,
+        use_bs=use_bs,
+    )
 
 
 def run_intraday_backtest(
@@ -440,6 +485,10 @@ def run_intraday_backtest(
     ta_rules = TaRules.from_yaml(rules_path)
     econ = PaperEconomics.from_yaml(rules_path)
     premium_scale = econ.premium_scale
+    structure_mode = str(knobs.get("structure_mode") or "naked").strip().lower()
+    if structure_mode not in ("naked", "debit_spread"):
+        structure_mode = "naked"
+    width_strikes = max(1, int(knobs.get("debit_spread_width_strikes") or 2))
     win_start = _parse_window_time(
         knobs.get("window_start_et"), ENTRY_WINDOW_START
     )
@@ -463,6 +512,9 @@ def run_intraday_backtest(
         f"entry_window_et=[{win_start.strftime('%H:%M')},"
         f"{win_end.strftime('%H:%M')})"
     )
+    result.notes.append(f"structure_mode={structure_mode}")
+    if structure_mode == "debit_spread":
+        result.notes.append(f"debit_spread_width_strikes={width_strikes}")
     if bars is None or bars.empty:
         result.notes.append("empty bars")
         return result
@@ -511,11 +563,13 @@ def run_intraday_backtest(
             exp = pos.expiration_date
             dte = max(0, (exp - today).days)
             pos.dte = dte
-            mark = synthesize_call_premium(
+            # Thin adapter: debit_spread marks net value so evaluate_exit_alerts
+            # TP/SL fire on spread return % (same path as naked).
+            mark = _mark_open_position(
                 spy,
-                xsp_strike=pos.strike,
+                op=op,
                 dte=dte,
-                iv=iv_seed,
+                iv_seed=iv_seed,
                 premium_scale=premium_scale,
                 use_bs=use_bs,
             )
@@ -669,18 +723,47 @@ def run_intraday_backtest(
         dte_target = _pick_dte(knobs)
         exp = today + timedelta(days=dte_target)
         strike = _pick_strike(spy, knobs["strike_pick"])
-        entry_mid = synthesize_call_premium(
-            spy,
-            xsp_strike=strike,
-            dte=dte_target,
-            iv=iv_seed,
-            premium_scale=premium_scale,
-            use_bs=use_bs,
-        )
+        short_strike: float | None = None
+        width_points: float | None = None
+        if structure_mode == "debit_spread":
+            short_strike = select_short_strike(
+                strike, width_strikes=width_strikes
+            )
+            spread = synthesize_debit_spread(
+                spy,
+                long_strike=strike,
+                short_strike=short_strike,
+                dte=dte_target,
+                iv=iv_seed,
+                premium_scale=premium_scale,
+                use_bs=use_bs,
+            )
+            if spread is None:
+                result.n_blocked_spread += 1
+                result.n_entries_blocked += 1
+                continue
+            entry_mid = float(spread.net_debit)
+            width_points = float(spread.width_points)
+        else:
+            entry_mid = synthesize_call_premium(
+                spy,
+                xsp_strike=strike,
+                dte=dte_target,
+                iv=iv_seed,
+                premium_scale=premium_scale,
+                use_bs=use_bs,
+            )
         fill = entry_fill_premium(entry_mid, econ)
         entry_ts_s = now_et.isoformat()
+        pos_id_suffix = (
+            f"{int(strike)}-{int(short_strike)}"
+            if short_strike is not None
+            else f"{int(strike)}"
+        )
         pos = LaneAPosition(
-            position_id=f"bt15:{variant_id}:{today.isoformat()}:{int(strike)}",
+            position_id=(
+                f"bt15:{variant_id}:{today.isoformat()}:{pos_id_suffix}"
+            ),
             chain_symbol="XSP",
             option_type="call",
             strike=strike,
@@ -699,6 +782,8 @@ def run_intraday_backtest(
             if need_bounce and ta_entry_ok
             else f"close_entry:{gate}"
         )
+        if structure_mode == "debit_spread":
+            reason = f"debit_spread:{reason}"
         open_book.append(
             _OpenPos(
                 position=pos,
@@ -708,6 +793,9 @@ def run_intraday_backtest(
                 entry_reason=reason,
                 regime_at_entry=str(regime) if regime else None,
                 dte_at_entry=dte_target,
+                structure_mode=structure_mode,
+                short_strike=short_strike,
+                width_points=width_points,
             )
         )
         last_entry_date = today
@@ -721,11 +809,11 @@ def run_intraday_backtest(
         marked_returns: list[float] = []
         for op in open_book:
             dte = max(0, (op.position.expiration_date - last_now.date()).days)
-            mark = synthesize_call_premium(
+            mark = _mark_open_position(
                 last_spy,
-                xsp_strike=op.position.strike,
+                op=op,
                 dte=dte,
-                iv=iv_seed,
+                iv_seed=iv_seed,
                 premium_scale=premium_scale,
                 use_bs=use_bs,
             )
@@ -744,3 +832,4 @@ def run_intraday_backtest(
         )
 
     return result
+

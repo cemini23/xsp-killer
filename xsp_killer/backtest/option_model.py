@@ -1,6 +1,7 @@
 """Synthesize call premium path from underlying OHLC (BS-lite + fallback).
 
 This is a **model**, not historical option fills. Used only for relative ranking.
+Never claim historical_xsp_chain fidelity — always modeled_bs_lite.
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import Callable
 
+from xsp_killer.debit_spread import DebitSpread, build_debit_spread
 from xsp_killer.lane_a_entry import estimate_fallback_premium
 from xsp_killer.paper_economics import scale_spy_premium
 
@@ -70,6 +72,86 @@ def synthesize_call_premium(
         scale_to_xsp=True,
         premium_scale=premium_scale,
     )
+
+
+def synthesize_debit_spread(
+    spy_price: float,
+    *,
+    long_strike: float,
+    short_strike: float,
+    dte: int,
+    iv: float = 0.18,
+    premium_scale: float | None = None,
+    use_bs: bool = True,
+) -> DebitSpread | None:
+    """Dual-leg BS-lite mids → ``build_debit_spread`` (or None if incoherent).
+
+    Long and short premiums share the same scale. Returns None when the short
+    mid is not strictly cheaper than the long mid (or other build rejects).
+    """
+    long_prem = synthesize_call_premium(
+        spy_price,
+        xsp_strike=long_strike,
+        dte=dte,
+        iv=iv,
+        premium_scale=premium_scale,
+        use_bs=use_bs,
+    )
+    short_prem = synthesize_call_premium(
+        spy_price,
+        xsp_strike=short_strike,
+        dte=dte,
+        iv=iv,
+        premium_scale=premium_scale,
+        use_bs=use_bs,
+    )
+    scale = premium_scale if premium_scale is not None else 1.0
+    return build_debit_spread(
+        long_strike=long_strike,
+        long_premium=long_prem,
+        short_strike=short_strike,
+        short_premium=short_prem,
+        premium_scale=scale if scale and scale > 0 else 1.0,
+    )
+
+
+def debit_spread_mark(
+    spy_price: float,
+    *,
+    long_strike: float,
+    short_strike: float,
+    width_points: float,
+    dte: int,
+    iv: float = 0.18,
+    premium_scale: float | None = None,
+    use_bs: bool = True,
+) -> tuple[float, float, float]:
+    """Return ``(long_mid, short_mid, spread_value_scaled)`` for exit marking.
+
+    Spread value is ``long - short`` clamped to ``[0, width * scale]`` so it
+    lives in the same notional scale as naked ``synthesize_call_premium`` mids.
+    """
+    long_mid = synthesize_call_premium(
+        spy_price,
+        xsp_strike=long_strike,
+        dte=dte,
+        iv=iv,
+        premium_scale=premium_scale,
+        use_bs=use_bs,
+    )
+    short_mid = synthesize_call_premium(
+        spy_price,
+        xsp_strike=short_strike,
+        dte=dte,
+        iv=iv,
+        premium_scale=premium_scale,
+        use_bs=use_bs,
+    )
+    scale = premium_scale if premium_scale is not None and premium_scale > 0 else 1.0
+    width_scaled = max(0.0, float(width_points) * scale)
+    raw = float(long_mid) - float(short_mid)
+    value = min(max(raw, 0.0), width_scaled)
+    return float(long_mid), float(short_mid), round(value, 4)
 
 
 def premium_path_fn(

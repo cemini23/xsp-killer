@@ -109,4 +109,9 @@ def entry_knobs_from_rules_dict(data: dict[str, Any]) -> dict[str, Any]:
         # Entry clock window (ET). Defaults match production close window.
         "window_start_et": str(entry.get("window_start_et", "15:45")),
         "window_end_et": str(entry.get("window_end_et", "16:00")),
+        # Structure: naked long call (default) or call debit spread.
+        "structure_mode": str(entry.get("structure_mode", "naked")).strip().lower(),
+        "debit_spread_width_strikes": int(
+            entry.get("debit_spread_width_strikes", 2)
+        ),
     }

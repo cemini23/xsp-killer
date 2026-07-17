@@ -125,7 +125,10 @@ On each closed Stage B trade, if any bar within 90 minutes of entry has `ret_pct
 # Offline fixture smoke
 PYTHONPATH=/opt/xsp-killer python3 scripts/optimize_entry_time.py --mode fixture -v
 
-# Strict UW entry-time sweep (uses tipdrop key via existing loader; no LIVE_* flips)
+# Strict UW entry-time sweep (on Hetzner; no LIVE_* flips)
+# Point at tipdrop so the loader finds UNUSUAL_WHALES_API_KEY (do not export the key in chat).
+export XSP_UW_TIPDROP_ROOT=/opt/tipdrop-scanner
+cd /opt/xsp-killer
 PYTHONPATH=/opt/xsp-killer python3 scripts/optimize_entry_time.py --mode uw \
   --period 5y --intraday-period 60d --mcpt --out reports/backtest -v
 

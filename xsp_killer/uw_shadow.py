@@ -36,6 +36,8 @@ def _tipdrop_root() -> Path:
 
 def _ensure_tipdrop_on_path() -> Path:
     root = _tipdrop_root()
+    if not root.is_dir() or not (root / "data" / "fetcher.py").is_file():
+        raise FileNotFoundError(f"TipDrop root unavailable: {root}")
     root_s = str(root)
     if root_s not in sys.path:
         sys.path.insert(0, root_s)

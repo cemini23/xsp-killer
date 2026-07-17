@@ -58,11 +58,21 @@ def _to_datetime_index_like(values: Any) -> pd.DatetimeIndex | pd.Series:
     so aware values normalize before the caller's tz_convert to ET.
     """
     try:
-        return pd.to_datetime(values, utc=False)
+        parsed = pd.to_datetime(values, utc=False)
     except ValueError as exc:
         if "Mixed timezones" not in str(exc):
             raise
         return pd.to_datetime(values, utc=True)
+
+    # pandas 2 currently warns and returns an object Index/Series for mixed
+    # offsets instead of raising; pandas 3 raises the ValueError handled above.
+    # Normalize both behaviors so callers always receive datetime-like values.
+    if isinstance(parsed, pd.Series):
+        if not pd.api.types.is_datetime64_any_dtype(parsed.dtype):
+            return pd.to_datetime(values, utc=True)
+    elif not isinstance(parsed, pd.DatetimeIndex):
+        return pd.DatetimeIndex(pd.to_datetime(values, utc=True))
+    return parsed
 
 
 def _normalize_ohlc(
@@ -289,9 +299,7 @@ def _cache_status(
         now = datetime.now(timezone.utc)
         fetched_at_utc = fetched_at.astimezone(timezone.utc)
         if fetched_at_utc > now + CACHE_CLOCK_SKEW:
-            raise ValueError(
-                "cache fetched_at exceeds tolerated 5-minute clock skew"
-            )
+            raise ValueError("cache fetched_at exceeds tolerated 5-minute clock skew")
         age = max(timedelta(0), now - fetched_at_utc)
         if max_cache_age is not None:
             for field in ("csv_sha256", "first_bar", "last_bar"):
@@ -340,9 +348,7 @@ def _fetch_uw_history(
         else:
             raw = provider.get_intraday(ticker, "15m", period)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "UW fetch failed %s %s: %s", ticker, interval, _safe_error(exc)
-        )
+        logger.warning("UW fetch failed %s %s: %s", ticker, interval, _safe_error(exc))
         return None
 
     if raw is None:
@@ -509,11 +515,7 @@ def load_uw_bars_strict(
             "n_sessions": n_sess,
             "has_overnight_bars": False,
             "session_phases_observed": ["daily"],
-            "start": (
-                start.isoformat()
-                if hasattr(start, "isoformat")
-                else str(start)
-            ),
+            "start": (start.isoformat() if hasattr(start, "isoformat") else str(start)),
             "end": end.isoformat() if hasattr(end, "isoformat") else str(end),
             "interval": "1d",
         }

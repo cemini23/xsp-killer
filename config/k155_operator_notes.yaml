@@ -132,3 +132,29 @@ k170:
   turbovec:
     no_prod_index_swap: true
     note: "optional local RAG experiment only; no prod index swap without soak"
+
+# K172 — CF view shift + Macro Charts Asia AI selloff (log-only; extends K155).
+k172:
+  version: "2026-07-17"
+  cf_view_shift:
+    flag: momentum_unwind_carry_risks
+    overnight_posture: tighten  # tighten Lane A overnight caution (context only)
+    note: "Capital Flows view/positions changed; momentum unwind / carry risks next; overnight caution only"
+  asia_ai_selloff:
+    taiex_tsm: washout  # Taiex/TSM −7% per Macro Charts Jul 17
+    kioxia: crush
+    korea_margin_call_chatter: true
+    no_chase_memory_semis_overnight: true
+    wait_clear_bounce_rr: true
+    note: "Asia AI capitulation; do not chase Memory/semis overnight; wait clear bounce R/R"
+  lane_a_posture:
+    keep_tight_vs_k170: true
+    note: "Keep Lane A tight vs existing K170 SOX/DXY gates + CF view-shift caution"
+  ai_commoditization:
+    context_only: true
+    no_new_rh_sleeve: true
+    note: "DeepSeek/China energy-cost AI commoditization / cheap-open-model = regime context; no new RH AI sleeve"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

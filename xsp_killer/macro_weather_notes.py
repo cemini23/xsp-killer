@@ -51,6 +51,11 @@ def load_k170_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k170")
 
 
+def load_k172_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K172 CF view shift + Asia AI selloff notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k172")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -97,9 +102,10 @@ def build_monitor_macro_weather_extras(
     k162_notes: dict[str, Any] | None = None,
     k167_notes: dict[str, Any] | None = None,
     k170_notes: dict[str, Any] | None = None,
+    k172_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155/K158/K161/K162/K167/K170 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155/K158/K161/K162/K167/K170/K172 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -110,6 +116,7 @@ def build_monitor_macro_weather_extras(
     k162 = k162_notes if k162_notes is not None else load_k162_notes(path)
     k167 = k167_notes if k167_notes is not None else load_k167_notes(path)
     k170 = k170_notes if k170_notes is not None else load_k170_notes(path)
+    k172 = k172_notes if k172_notes is not None else load_k172_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -179,6 +186,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k170:
                 extras[key] = k170[key]
+
+    if k172:
+        extras["k172_version"] = k172.get("version")
+        for key in (
+            "cf_view_shift",
+            "asia_ai_selloff",
+            "lane_a_posture",
+            "ai_commoditization",
+            "constraints",
+        ):
+            if key in k172:
+                extras[key] = k172[key]
 
     return extras
 

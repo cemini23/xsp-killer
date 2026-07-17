@@ -67,7 +67,12 @@ from xsp_killer.lane_a_variants import VariantSpec, _deep_merge  # noqa: E402
 
 logger = logging.getLogger("xsp_killer.optimize_entry_time")
 
-_DEFAULT_TIPDROP = Path(r"C:\Users\Owner\institutional-shadow")
+# Hetzner prod tipdrop first; Windows laptop path is David's local checkout.
+_DEFAULT_TIPDROP = (
+    Path("/opt/tipdrop-scanner")
+    if Path("/opt/tipdrop-scanner").is_dir()
+    else Path(r"C:\Users\Owner\institutional-shadow")
+)
 
 _FORBIDDEN_ARTIFACT = (
     "LIVE_ENTRIES",

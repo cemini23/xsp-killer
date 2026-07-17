@@ -111,6 +111,8 @@ def _rules(
             "swing_hold": False,
             "max_hold_dte": 0,
             "max_hold_sessions": max_hold_sessions,
+            # Isolate fixture dates from prod Friday flatten (see spread_search tests).
+            "friday_flatten_enabled": False,
         },
         "ta": {
             "entry": {
@@ -192,6 +194,7 @@ def test_naked_default_parity_smoke(tmp_path: Path):
                 "swing_hold": False,
                 "max_hold_dte": 0,
                 "max_hold_sessions": 5,
+                "friday_flatten_enabled": False,
             },
             "ta": {
                 "entry": {

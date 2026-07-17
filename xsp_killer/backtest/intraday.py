@@ -675,10 +675,9 @@ def run_intraday_backtest(
         if not in_entry_window(now_et, win_start, win_end):
             continue
 
-        # Match prod friday_no_entry: never open long premium into Friday
-        # expiration risk. Close-window Friday would otherwise open after
-        # that bar's exit pass and skip friday_flatten until the next week.
-        if now_et.weekday() == 4:
+        # Match prod friday_no_entry when Friday flatten is armed (same YAML
+        # package). Tests that disable friday_flatten_enabled opt out of both.
+        if lane_rules.friday_flatten_enabled and now_et.weekday() == 4:
             result.n_entries_blocked += 1
             result.n_blocked_friday += 1
             continue

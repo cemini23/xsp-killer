@@ -133,6 +133,8 @@ def _rules(
             "require_upper_bb_for_take_profit": require_upper_bb,
             "swing_hold": False,
             "max_hold_dte": 0,
+            # Isolate fixture dates from prod Friday flatten (see spread_search tests).
+            "friday_flatten_enabled": False,
         },
         "ta": {
             "entry": {

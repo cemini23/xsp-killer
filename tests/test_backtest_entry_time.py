@@ -130,6 +130,8 @@ def _rules(
         "swing_hold": False,
         "max_hold_dte": 0,
         "stop_loss_early_minutes": stop_loss_early_minutes,
+        # Isolate fixture dates from prod Friday flatten (see spread_search tests).
+        "friday_flatten_enabled": False,
     }
     if stop_loss_pct_early is not None:
         exit_cfg["stop_loss_pct_early"] = stop_loss_pct_early

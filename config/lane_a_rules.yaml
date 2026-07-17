@@ -20,6 +20,9 @@ entry:
   strike_max_steps_from_atm: 1
   dte_pick: min
   strike_pick: cheapest_near_atm
+  # Debit spreads remain Stage B / shadow research only — never wire into
+  # place_option_order. Enable debit_spread_shadow on an inactive variant only.
+  # debit_spread_shadow: false
 
 exit:
   stop_loss_pct: 0.20
@@ -33,7 +36,13 @@ exit:
   no_sell_end_et: "00:00"
   require_upper_bb_for_take_profit: true
   # Disabled by default. Positive values cap holds by XNYS-proxy sessions.
+  # History median hold ~1d — research soak may try max_hold_sessions: 3 on an
+  # inactive variant; leave base at 0 so active soak is not surprised mid-day.
   max_hold_sessions: 0
+  # History: Friday ~16:00 ET expiration wipeouts on long premium. Flatten when
+  # session is open at/after this ET clock (SL still takes precedence).
+  friday_flatten_enabled: true
+  friday_flatten_et: "15:45"
 
 paper_economics:
   commission_usd_per_contract: 0.65
@@ -79,6 +88,8 @@ exit_reasons:
   - take_profit
   - upper_bb_rejection
   - time_stop
+  - hold_cap
+  - friday_flatten
   - manual
 
 monitor:
@@ -97,6 +108,7 @@ paper_pnl:
 paper_entry:
   enabled: true
   max_open_positions: 1
+  # Hard size discipline from live history: Agentic/paper stays 1 contract.
   quantity: 1
 
 live:
@@ -105,6 +117,8 @@ live:
   # A 2-lot operator profile needs ~$5k buying power at a 50% cost frac
   # (max_debit_usd $2.5k = 50% of $5k) so the full-debit gate and cost-frac gate
   # bind together rather than one trivially dominating the other.
+  # History prefers 1-lot; Agentic/paper quantity stays 1 — do not raise live
+  # lot size on the Agentic path even if reviewer_max_contracts is 2.
   max_loss_usd: 1200.0
   max_debit_usd: 2500.0
   documented_min_buying_power_usd: 5000
@@ -113,7 +127,7 @@ live:
   # Deterministic pre-trade order reviewer (fail-closed second opinion before
   # buy-to-open). Disable via XSP_LANE_A_LIVE_REVIEWER=false (not recommended).
   reviewer_max_spread_frac: 0.25   # veto if (ask-bid)/mid exceeds this
-  reviewer_max_contracts: 2        # align with rh_mcp max_contracts_per_order
+  reviewer_max_contracts: 2        # operator profile; Agentic paper qty remains 1
 
 # Shadow-only vol gates (never block paper entry unless operator enables enforce)
 vol_shadow:

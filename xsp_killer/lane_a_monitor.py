@@ -51,6 +51,7 @@ ExitReason = Literal[
     "upper_bb_rejection",
     "time_stop",
     "hold_cap",
+    "friday_flatten",
     "manual",
 ]
 
@@ -79,6 +80,9 @@ class LaneRules:
     # Nagus: tight 10% SL in the first ~90 minutes, then widen.
     stop_loss_pct_early: float | None = None
     stop_loss_early_minutes: int = 90
+    # History: Friday ~16:00 ET expiration wipeouts — flatten long premium.
+    friday_flatten_enabled: bool = False
+    friday_flatten_et: time = field(default_factory=lambda: time(15, 45))
 
     @classmethod
     def from_yaml(cls, path: Path) -> LaneRules:
@@ -149,6 +153,12 @@ class LaneRules:
             ),
             stop_loss_early_minutes=int(
                 exit_cfg.get("stop_loss_early_minutes", 90)
+            ),
+            friday_flatten_enabled=bool(
+                exit_cfg.get("friday_flatten_enabled", False)
+            ),
+            friday_flatten_et=_parse_time(
+                str(exit_cfg.get("friday_flatten_et", "15:45"))
             ),
         )
 
@@ -753,6 +763,33 @@ def evaluate_exit_alerts(
                 )
             )
             return alerts
+
+    # Friday flatten: after SL (risk first); fires even without TP (expiration risk).
+    now_local = now.astimezone(ET) if now.tzinfo else now.replace(tzinfo=ET)
+    if (
+        rules.friday_flatten_enabled
+        and now_local.weekday() == 4  # Friday
+        and now_local.time() >= rules.friday_flatten_et
+    ):
+        clock = rules.friday_flatten_et.strftime("%H:%M")
+        return_detail = (
+            f"return {ret_pct * 100:.1f}%"
+            if ret_pct is not None
+            else "return unavailable"
+        )
+        alerts.append(
+            ExitAlert(
+                position_id=pos.position_id,
+                exit_reason="friday_flatten",
+                message=(
+                    f"Friday flatten at/after {clock} ET "
+                    f"(expiration risk; {return_detail})"
+                ),
+                pnl_usd=pnl,
+                pnl_per_contract=pnl_c,
+            )
+        )
+        return alerts
 
     time_stop_dte = rules.max_hold_dte if rules.swing_hold else 0
     if pos.dte is not None and pos.dte <= time_stop_dte:

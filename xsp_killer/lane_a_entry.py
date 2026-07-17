@@ -507,6 +507,8 @@ def write_entry_brief(decision: EntryDecision, out_path: Path | None = None) -> 
 def _bucket_skip_reason(reason: str | None) -> str:
     if not reason:
         return "unknown"
+    if reason == "friday_no_entry" or reason.startswith("friday_no_entry"):
+        return "friday_no_entry"
     if reason.startswith("regime "):
         return "regime_gate"
     if reason.startswith("outside"):
@@ -862,6 +864,20 @@ def run_paper_entry(
 
     if not entry_rules.enabled:
         decision.skip_reason = "paper_entry.disabled in rules"
+        _finalize_entry(
+            state,
+            state_path,
+            decision,
+            publish_intel,
+            log_path=log_path,
+            brief_path=brief_path,
+        )
+        return decision
+
+    # History: never open long premium into Friday expiration risk (paper + live).
+    now_local = now.astimezone(ET) if now.tzinfo else now.replace(tzinfo=ET)
+    if now_local.weekday() == 4:  # Friday
+        decision.skip_reason = "friday_no_entry"
         _finalize_entry(
             state,
             state_path,
@@ -1298,9 +1314,7 @@ def _maybe_place_live_entry(
         if cost > max_debit_usd:
             decision.live_order = {
                 "placed": False,
-                "reason": (
-                    f"max debit ${cost:,.0f} > live cap ${max_debit_usd:,.0f}"
-                ),
+                "reason": (f"max debit ${cost:,.0f} > live cap ${max_debit_usd:,.0f}"),
                 "contract": contract,
                 "buying_power": buying_power,
                 "cost_estimate": round(cost, 2),
@@ -1483,17 +1497,11 @@ def _expired_paper_full_debit_pnl(
             and avg > 0
         ):
             # average_price already includes entry fill economics.
-            pnl_per = pnl_from_entry_fill(
-                entry_fill=avg, exit_mid=0.0, econ=econ
-            )
+            pnl_per = pnl_from_entry_fill(entry_fill=avg, exit_mid=0.0, econ=econ)
         elif entry_mid is not None and entry_mid > 0:
-            pnl_per = pnl_per_contract(
-                entry_mid=entry_mid, exit_mid=0.0, econ=econ
-            )
+            pnl_per = pnl_per_contract(entry_mid=entry_mid, exit_mid=0.0, econ=econ)
         elif avg is not None and avg > 0:
-            pnl_per = pnl_from_entry_fill(
-                entry_fill=avg, exit_mid=0.0, econ=econ
-            )
+            pnl_per = pnl_from_entry_fill(entry_fill=avg, exit_mid=0.0, econ=econ)
     except Exception as exc:
         logger.warning("expired paper economics pnl failed: %s", exc)
 

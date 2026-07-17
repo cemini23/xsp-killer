@@ -114,3 +114,16 @@ PYTHONPATH=/opt/xsp-killer python3 scripts/optimize_spread_search.py --mode uw \
 Reports: `reports/backtest/spread_search_*.{json,md}` — always
 `pricing_fidelity=modeled_bs_lite`, YAML `active: false`, RESEARCH ONLY.
 Friday flatten + friday_no_entry apply in Stage B intraday path.
+
+## Follow-up (paper soak — 2026-07-17)
+
+**Done:** enable `debit_spread_shadow: true` + `debit_spread_width_strikes: 3` on
+**base** `config/lane_a_rules.yaml` so paper-entry timer accumulates SPY→XSP proxy
+spread economics beside the naked paper call.
+
+**Hard stops unchanged:** still naked `place_option_order` path only; no LIVE_*;
+no multi-leg broker orders. Shadow is log-only.
+
+**Next:** after N≥20 paper entries with shadow, roll up mean
+`cost_reduction_pct` / `net_debit` vs naked premium; then decide Agentic
+multi-leg fill research once funded.

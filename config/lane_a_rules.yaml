@@ -20,9 +20,11 @@ entry:
   strike_max_steps_from_atm: 1
   dte_pick: min
   strike_pick: cheapest_near_atm
-  # Debit spreads remain Stage B / shadow research only — never wire into
-  # place_option_order. Enable debit_spread_shadow on an inactive variant only.
-  # debit_spread_shadow: false
+  # Debit spreads remain research/shadow only — never wire into place_option_order.
+  # Paper soak logs SPY→XSP proxy spread economics alongside the naked paper call
+  # (width 3 = best Stage B BS-lite cell; still modeled/proxy, not live multi-leg).
+  debit_spread_shadow: true
+  debit_spread_width_strikes: 3
 
 exit:
   stop_loss_pct: 0.20

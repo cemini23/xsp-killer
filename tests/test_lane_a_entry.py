@@ -180,6 +180,68 @@ def test_run_paper_entry_success_mocked(tmp_path, monkeypatch):
     assert decision.position["spx_at_entry"] == 6010.0
 
 
+def test_prod_rules_enable_debit_spread_shadow():
+    """Paper soak baseline logs spread economics (never places multi-leg)."""
+    from xsp_killer.lane_a_entry import DEFAULT_RULES, EntryRules
+
+    rules = EntryRules.from_yaml(DEFAULT_RULES)
+    assert rules.debit_spread_shadow is True
+    assert rules.debit_spread_width_strikes == 3
+
+
+def test_run_paper_entry_logs_debit_spread_shadow(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_PAPER_ENTRY", "true")
+    _mock_ta_entry_ok(monkeypatch)
+    rules_path = tmp_path / "rules-shadow.yaml"
+    rules_path.write_text(
+        "ta:\n  entry:\n    mode: close_window_only\n"
+        "entry:\n  debit_spread_shadow: true\n  debit_spread_width_strikes: 3\n"
+        "paper_entry:\n  enabled: true\n  quantity: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "xsp_killer.lane_a_entry.read_regime_detail",
+        lambda: ("GREEN", True, None, None),
+    )
+    monkeypatch.setattr(
+        "xsp_killer.lane_a_entry.fetch_spy_ohlcv",
+        lambda: (600.0, 595.0, 0.5, "2026-07-13"),
+    )
+    monkeypatch.setattr("xsp_killer.lane_a_entry.fetch_spx_proxy", lambda: 6010.0)
+    monkeypatch.setattr(
+        "xsp_killer.lane_a_entry.pick_expiration",
+        lambda rules, today=None, dte_pick="min", dte_target=None: date(2026, 7, 31),
+    )
+    monkeypatch.setattr(
+        "xsp_killer.lane_a_entry.pick_strike",
+        lambda *args, **kwargs: (6010.0, 2.45, 0.52),
+    )
+    monkeypatch.setattr(
+        "xsp_killer.lane_a_entry.compute_debit_spread_shadow",
+        lambda **kwargs: {
+            "long_strike": kwargs["long_strike"],
+            "short_strike": kwargs["long_strike"] + 15.0,
+            "width_points": 15.0,
+            "net_debit": 8.0,
+            "cost_reduction_pct": 0.4,
+            "width_strikes_requested": kwargs.get("width_strikes", 3),
+        },
+    )
+
+    decision = run_paper_entry(
+        rules_path=rules_path,
+        state_path=tmp_path / "state.json",
+        log_path=tmp_path / "paper.jsonl",
+        now_et=datetime(2026, 7, 14, 15, 47, tzinfo=ET),
+        publish_intel=False,
+    )
+    assert decision.entered is True
+    assert decision.debit_spread_shadow is not None
+    assert decision.position["debit_spread_shadow"]["width_points"] == 15.0
+    # Still naked paper call — shadow does not change structure traded.
+    assert decision.position["entry_reason"] == "close_window_long_call"
+
+
 def test_run_paper_entry_blocks_when_open_position(tmp_path, monkeypatch):
     monkeypatch.setenv("XSP_LANE_A_PAPER_ENTRY", "true")
     _mock_ta_entry_ok(monkeypatch)

@@ -93,6 +93,7 @@ class BacktestResult:
     trades: list[TradeRow] = field(default_factory=list)
     n_entries_blocked: int = 0
     n_blocked_spread: int = 0
+    n_blocked_friday: int = 0
     bars_used: int = 0
     source: str = "fixture"
     notes: list[str] = field(default_factory=list)
@@ -106,6 +107,7 @@ class BacktestResult:
             "n_trades": len(self.trades),
             "n_entries_blocked": self.n_entries_blocked,
             "n_blocked_spread": self.n_blocked_spread,
+            "n_blocked_friday": self.n_blocked_friday,
             "bars_used": self.bars_used,
             "source": self.source,
             "notes": list(self.notes),

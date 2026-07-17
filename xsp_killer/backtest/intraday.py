@@ -1,9 +1,11 @@
 """Stage B: session-aware 15-minute Lane A replay.
 
-Entries only in the ET close window [15:45, 16:00). Exits and hold caps
-delegate session truth to live ``xsp_session_open`` — no re-derived hours.
-Exchange session keys map GTH evening (>=20:15 ET) to the next calendar date
-so Sunday reopen and Monday morning share one hold session.
+Entries only inside the configured ET window (default close [15:45, 16:00)).
+Exits and hold caps delegate session truth to live ``xsp_session_open`` — no
+re-derived hours. Friday flatten / Friday entry veto follow LaneRules so
+research matches production ops. Exchange session keys map GTH evening
+(>=20:15 ET) to the next calendar date so Sunday reopen and Monday morning
+share one hold session.
 """
 
 from __future__ import annotations
@@ -515,6 +517,11 @@ def run_intraday_backtest(
     result.notes.append(f"structure_mode={structure_mode}")
     if structure_mode == "debit_spread":
         result.notes.append(f"debit_spread_width_strikes={width_strikes}")
+    if lane_rules.friday_flatten_enabled:
+        clock = lane_rules.friday_flatten_et.strftime("%H:%M")
+        result.notes.append(
+            f"friday_flatten_et>={clock}; friday_no_entry=weekday4"
+        )
     if bars is None or bars.empty:
         result.notes.append("empty bars")
         return result
@@ -666,6 +673,14 @@ def run_intraday_backtest(
         if last_entry_date == today:
             continue
         if not in_entry_window(now_et, win_start, win_end):
+            continue
+
+        # Match prod friday_no_entry: never open long premium into Friday
+        # expiration risk. Close-window Friday would otherwise open after
+        # that bar's exit pass and skip friday_flatten until the next week.
+        if now_et.weekday() == 4:
+            result.n_entries_blocked += 1
+            result.n_blocked_friday += 1
             continue
 
         ta_entry_ok = False

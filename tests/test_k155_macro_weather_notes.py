@@ -18,6 +18,7 @@ from xsp_killer.macro_weather_notes import (
     load_k167_notes,
     load_k170_notes,
     load_k172_notes,
+    load_k173_notes,
 )
 
 
@@ -501,6 +502,83 @@ def test_build_monitor_macro_weather_extras_k172_from_prod_config():
     assert extras["constraints"]["no_strategy_code"] is True
 
 
+def test_load_k173_notes_prod_config():
+    notes = load_k173_notes()
+    assert notes.get("version") == "2026-07-18"
+    assert notes["cf_regime_packet"]["flag"] == "momentum_unwind_carry_risk_map"
+    assert notes["bounce_rr"]["prefer_wait_clear_bounce"] is True
+    assert notes["bounce_rr"]["no_momentum_chase"] is True
+    assert notes["bounce_rr"]["extends_k172"] is True
+    assert notes["tavi_costa_mc_teaser"]["context_only"] is True
+    assert notes["klement_failure_gap"]["context_only"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k173(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k173": {
+                    "version": "2026-07-18",
+                    "cf_regime_packet": {
+                        "flag": "momentum_unwind_carry_risk_map",
+                    },
+                    "bounce_rr": {
+                        "prefer_wait_clear_bounce": True,
+                        "no_momentum_chase": True,
+                        "extends_k172": True,
+                    },
+                    "tavi_costa_mc_teaser": {"context_only": True},
+                    "klement_failure_gap": {"context_only": True},
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k173_notes=load_k173_notes(cfg),
+        notes_path=cfg,
+    )
+    assert extras is not None
+    assert extras["k173_version"] == "2026-07-18"
+    assert extras["cf_regime_packet"]["flag"] == "momentum_unwind_carry_risk_map"
+    assert extras["bounce_rr"]["prefer_wait_clear_bounce"] is True
+    assert extras["bounce_rr"]["no_momentum_chase"] is True
+    assert extras["bounce_rr"]["extends_k172"] is True
+    assert extras["tavi_costa_mc_teaser"]["context_only"] is True
+    assert extras["klement_failure_gap"]["context_only"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k173_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    assert extras is not None
+    assert extras["k173_version"] == "2026-07-18"
+    assert extras["cf_regime_packet"]["flag"] == "momentum_unwind_carry_risk_map"
+    assert extras["bounce_rr"]["prefer_wait_clear_bounce"] is True
+    assert extras["bounce_rr"]["no_momentum_chase"] is True
+    assert extras["bounce_rr"]["extends_k172"] is True
+    assert extras["tavi_costa_mc_teaser"]["context_only"] is True
+    assert extras["klement_failure_gap"]["context_only"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -522,6 +600,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k167_version"] == "2026-07-15"
     assert report.macro_weather_extras["k170_version"] == "2026-07-16"
     assert report.macro_weather_extras["k172_version"] == "2026-07-17"
+    assert report.macro_weather_extras["k173_version"] == "2026-07-18"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -535,5 +614,9 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "cf_view_shift" in report.macro_weather_extras
     assert "asia_ai_selloff" in report.macro_weather_extras
     assert "ai_commoditization" in report.macro_weather_extras
+    assert "cf_regime_packet" in report.macro_weather_extras
+    assert "bounce_rr" in report.macro_weather_extras
+    assert "tavi_costa_mc_teaser" in report.macro_weather_extras
+    assert "klement_failure_gap" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

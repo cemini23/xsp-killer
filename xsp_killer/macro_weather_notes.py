@@ -56,6 +56,11 @@ def load_k172_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k172")
 
 
+def load_k173_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K173 CF momentum unwind + carry risk map notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k173")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -103,9 +108,10 @@ def build_monitor_macro_weather_extras(
     k167_notes: dict[str, Any] | None = None,
     k170_notes: dict[str, Any] | None = None,
     k172_notes: dict[str, Any] | None = None,
+    k173_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155/K158/K161/K162/K167/K170/K172 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155/K158/K161/K162/K167/K170/K172/K173 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -117,6 +123,7 @@ def build_monitor_macro_weather_extras(
     k167 = k167_notes if k167_notes is not None else load_k167_notes(path)
     k170 = k170_notes if k170_notes is not None else load_k170_notes(path)
     k172 = k172_notes if k172_notes is not None else load_k172_notes(path)
+    k173 = k173_notes if k173_notes is not None else load_k173_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -198,6 +205,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k172:
                 extras[key] = k172[key]
+
+    if k173:
+        extras["k173_version"] = k173.get("version")
+        for key in (
+            "cf_regime_packet",
+            "bounce_rr",
+            "tavi_costa_mc_teaser",
+            "klement_failure_gap",
+            "constraints",
+        ):
+            if key in k173:
+                extras[key] = k173[key]
 
     return extras
 

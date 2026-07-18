@@ -158,3 +158,25 @@ k172:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K173 — CF momentum unwind + carry risks (log-only; extends K172).
+k173:
+  version: "2026-07-18"
+  cf_regime_packet:
+    flag: momentum_unwind_carry_risk_map
+    note: "Jul 16–17 CF as one regime packet; view already changed; unwind/carry is the risk map"
+  bounce_rr:
+    prefer_wait_clear_bounce: true
+    no_momentum_chase: true
+    extends_k172: true
+    note: "Prefer wait for clear bounce R/R over momentum chase (extends K172)"
+  tavi_costa_mc_teaser:
+    context_only: true
+    note: "Macro Charts Tavi Costa podcast teaser; no actionable levels in free drop"
+  klement_failure_gap:
+    context_only: true
+    note: "overconfidence check for ship gates / canary confidence — Context"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

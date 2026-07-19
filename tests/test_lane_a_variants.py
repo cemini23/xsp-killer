@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -816,6 +816,10 @@ def test_build_scoreboard_sets_liveness_from_latest_entry_eval(tmp_path):
 
 
 def test_build_scoreboard_includes_open_mtm_and_contract_clusters(tmp_path):
+    # Relative expiry keeps DTE in [0, dte_max] so MTM is not date-hardcoded.
+    exp = (date.today() + timedelta(days=28)).isoformat()
+    pos_id = f"paper:XSP:{exp}:6010"
+    cluster_id = f"XSP:call:{exp}:6010"
     _write_variants_config(
         tmp_path,
         {
@@ -840,12 +844,12 @@ def test_build_scoreboard_includes_open_mtm_and_contract_clusters(tmp_path):
                         ],
                         "paper_events": [],
                         "paper_positions": {
-                            "paper:XSP:2026-07-18:6010": {
-                                "position_id": "paper:XSP:2026-07-18:6010",
+                            pos_id: {
+                                "position_id": pos_id,
                                 "chain_symbol": "XSP",
                                 "option_type": "call",
                                 "strike": 6010.0,
-                                "expiration_date": "2026-07-18",
+                                "expiration_date": exp,
                                 "quantity": 1,
                                 "average_price": 20.0,
                                 "entry_mid_premium": 20.0,
@@ -873,10 +877,8 @@ def test_build_scoreboard_includes_open_mtm_and_contract_clusters(tmp_path):
     assert row["open_positions"] == 1
     assert row["open_positions_mtm_usd"] == 74.7
     assert row["open_positions_mtm_usd_1x"] == 7.47
-    assert row["contract_cluster_id"] == "XSP:call:2026-07-18:6010"
-    assert (
-        payload["contract_clusters"]["XSP:call:2026-07-18:6010"]["open_positions"] == 1
-    )
+    assert row["contract_cluster_id"] == cluster_id
+    assert payload["contract_clusters"][cluster_id]["open_positions"] == 1
 
 
 def test_build_scoreboard_exit_shadow_summary(tmp_path):

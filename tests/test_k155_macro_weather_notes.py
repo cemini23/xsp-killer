@@ -19,6 +19,7 @@ from xsp_killer.macro_weather_notes import (
     load_k170_notes,
     load_k172_notes,
     load_k173_notes,
+    load_k174_notes,
 )
 
 
@@ -579,6 +580,94 @@ def test_build_monitor_macro_weather_extras_k173_from_prod_config():
     assert extras["constraints"]["no_strategy_code"] is True
 
 
+def test_load_k174_notes_prod_config():
+    notes = load_k174_notes()
+    damaged = notes["macro_damaged_goods"]
+    assert notes.get("version") == "2026-07-19"
+    assert damaged["flag"] == "momentum_crash_capitulation_sector_div"
+    assert damaged["bounce_rr_unclear"] is True
+    assert damaged["do_not_chase"] is True
+    assert notes["cf_weekend_depth"]["flag"] == "jul16_19_regime_packet"
+    assert notes["cf_weekend_depth"][
+        "view_changed_unwind_carry_weekend_depth"
+    ] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k172_k173"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k174(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k174": {
+                    "version": "2026-07-19",
+                    "macro_damaged_goods": {
+                        "flag": "momentum_crash_capitulation_sector_div",
+                        "bounce_rr_unclear": True,
+                        "do_not_chase": True,
+                    },
+                    "cf_weekend_depth": {
+                        "flag": "jul16_19_regime_packet",
+                        "view_changed_unwind_carry_weekend_depth": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k172_k173": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k174_notes=load_k174_notes(cfg),
+        notes_path=cfg,
+    )
+    damaged = extras["macro_damaged_goods"]
+    assert extras is not None
+    assert extras["k174_version"] == "2026-07-19"
+    assert damaged["flag"] == "momentum_crash_capitulation_sector_div"
+    assert damaged["bounce_rr_unclear"] is True
+    assert damaged["do_not_chase"] is True
+    assert extras["cf_weekend_depth"]["flag"] == "jul16_19_regime_packet"
+    assert extras["cf_weekend_depth"][
+        "view_changed_unwind_carry_weekend_depth"
+    ] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k172_k173"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k174_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    damaged = extras["macro_damaged_goods"]
+    assert extras is not None
+    assert extras["k174_version"] == "2026-07-19"
+    assert damaged["flag"] == "momentum_crash_capitulation_sector_div"
+    assert damaged["bounce_rr_unclear"] is True
+    assert damaged["do_not_chase"] is True
+    assert extras["cf_weekend_depth"]["flag"] == "jul16_19_regime_packet"
+    assert extras["cf_weekend_depth"][
+        "view_changed_unwind_carry_weekend_depth"
+    ] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k172_k173"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -601,6 +690,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k170_version"] == "2026-07-16"
     assert report.macro_weather_extras["k172_version"] == "2026-07-17"
     assert report.macro_weather_extras["k173_version"] == "2026-07-18"
+    assert report.macro_weather_extras["k174_version"] == "2026-07-19"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -618,5 +708,8 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "bounce_rr" in report.macro_weather_extras
     assert "tavi_costa_mc_teaser" in report.macro_weather_extras
     assert "klement_failure_gap" in report.macro_weather_extras
+    assert "macro_damaged_goods" in report.macro_weather_extras
+    assert "cf_weekend_depth" in report.macro_weather_extras
+    assert "lane_a_overnight" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

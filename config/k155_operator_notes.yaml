@@ -180,3 +180,23 @@ k173:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K174 — Macro damaged goods + CF weekend depth (log-only; extends K173).
+k174:
+  version: "2026-07-19"
+  macro_damaged_goods:
+    flag: momentum_crash_capitulation_sector_div
+    bounce_rr_unclear: true
+    do_not_chase: true
+    note: "Macro Charts Jul 19: momentum crash / capitulation / flows / rates / oil / vol + sector long diversification — bounce R/R unclear → do not chase"
+  cf_weekend_depth:
+    flag: jul16_19_regime_packet
+    view_changed_unwind_carry_weekend_depth: true
+    note: "Treat CF Jul 16–19 as one regime packet (view changed → unwind/carry → weekend depth-of-field)"
+  lane_a_overnight:
+    keep_tight_vs_k172_k173: true
+    note: "Keep overnight Lane A criteria tight vs prior K172–K173 caution"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

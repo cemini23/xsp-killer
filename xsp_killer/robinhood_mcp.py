@@ -797,9 +797,7 @@ class RobinhoodMCPAdapter:
             # separate flags. Every leg must set position_effect to exactly
             # open or close — unknown/empty effects are denied (I7).
             legs = _normalize_legs(args)
-            effects = {
-                str(leg.get("position_effect") or "").lower() for leg in legs
-            }
+            effects = {str(leg.get("position_effect") or "").lower() for leg in legs}
             bad_effect = not effects or any(
                 effect not in {"open", "close"} for effect in effects
             )
@@ -842,9 +840,7 @@ class RobinhoodMCPAdapter:
             ).strip()
             ok_human, human_reason = human_variant_review_allows(variant)
             if not ok_human:
-                self._audit_deny(
-                    name, args, reason=human_reason, invariant="I7"
-                )
+                self._audit_deny(name, args, reason=human_reason, invariant="I7")
                 raise RhMcpError(human_reason)
             # Confirm pinned account is present on this OAuth token (Claudio/David).
             token_ok, token_reason = pinned_account_on_token(self)

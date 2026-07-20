@@ -66,6 +66,11 @@ def load_k174_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k174")
 
 
+def load_k177_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K177 paid damaged-goods + Moontower mixologist notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k177")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -115,9 +120,10 @@ def build_monitor_macro_weather_extras(
     k172_notes: dict[str, Any] | None = None,
     k173_notes: dict[str, Any] | None = None,
     k174_notes: dict[str, Any] | None = None,
+    k177_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K174 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K177 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -131,6 +137,7 @@ def build_monitor_macro_weather_extras(
     k172 = k172_notes if k172_notes is not None else load_k172_notes(path)
     k173 = k173_notes if k173_notes is not None else load_k173_notes(path)
     k174 = k174_notes if k174_notes is not None else load_k174_notes(path)
+    k177 = k177_notes if k177_notes is not None else load_k177_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -235,6 +242,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k174:
                 extras[key] = k174[key]
+
+    if k177:
+        extras["k177_version"] = k177.get("version")
+        for key in (
+            "paid_macro_damaged_goods",
+            "vix_vol_regime",
+            "am_vix_sox_context",
+            "moontower_mixologist",
+            "constraints",
+        ):
+            if key in k177:
+                extras[key] = k177[key]
 
     return extras
 

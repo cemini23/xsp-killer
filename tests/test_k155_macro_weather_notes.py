@@ -20,6 +20,7 @@ from xsp_killer.macro_weather_notes import (
     load_k172_notes,
     load_k173_notes,
     load_k174_notes,
+    load_k177_notes,
 )
 
 
@@ -668,6 +669,110 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert extras["constraints"]["no_strategy_code"] is True
 
 
+def test_load_k177_notes_prod_config():
+    notes = load_k177_notes()
+    paid = notes["paid_macro_damaged_goods"]
+    assert notes.get("version") == "2026-07-20"
+    assert paid["flag"] == "incomplete_capitulation"
+    assert paid["bounce_rr_unclear"] is True
+    assert paid["do_not_chase"] is True
+    assert notes["vix_vol_regime"]["flag"] == "vix_gt_20_sustain_caution"
+    assert notes["vix_vol_regime"]["log_only"] is True
+    assert notes["vix_vol_regime"]["no_size_gate_flip"] is True
+    assert notes["am_vix_sox_context"]["flag"] == "am_vix_short_sox_coil_12k"
+    assert notes["am_vix_sox_context"]["extends_k170"] is True
+    assert notes["moontower_mixologist"]["flag"] == "iv_percentile_skew_geometry"
+    assert notes["moontower_mixologist"]["screen_straddle_rr_strangle"] is True
+    assert notes["moontower_mixologist"]["not_cocktail_names"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k177(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k177": {
+                    "version": "2026-07-20",
+                    "paid_macro_damaged_goods": {
+                        "flag": "incomplete_capitulation",
+                        "bounce_rr_unclear": True,
+                        "do_not_chase": True,
+                    },
+                    "vix_vol_regime": {
+                        "flag": "vix_gt_20_sustain_caution",
+                        "log_only": True,
+                        "no_size_gate_flip": True,
+                    },
+                    "am_vix_sox_context": {
+                        "flag": "am_vix_short_sox_coil_12k",
+                        "extends_k170": True,
+                    },
+                    "moontower_mixologist": {
+                        "flag": "iv_percentile_skew_geometry",
+                        "screen_straddle_rr_strangle": True,
+                        "not_cocktail_names": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k177_notes=load_k177_notes(cfg),
+        notes_path=cfg,
+    )
+    paid = extras["paid_macro_damaged_goods"]
+    assert extras is not None
+    assert extras["k177_version"] == "2026-07-20"
+    assert paid["flag"] == "incomplete_capitulation"
+    assert paid["bounce_rr_unclear"] is True
+    assert paid["do_not_chase"] is True
+    assert extras["vix_vol_regime"]["flag"] == "vix_gt_20_sustain_caution"
+    assert extras["vix_vol_regime"]["log_only"] is True
+    assert extras["vix_vol_regime"]["no_size_gate_flip"] is True
+    assert extras["am_vix_sox_context"]["flag"] == "am_vix_short_sox_coil_12k"
+    assert extras["am_vix_sox_context"]["extends_k170"] is True
+    assert extras["moontower_mixologist"]["flag"] == "iv_percentile_skew_geometry"
+    assert extras["moontower_mixologist"]["screen_straddle_rr_strangle"] is True
+    assert extras["moontower_mixologist"]["not_cocktail_names"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k177_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    paid = extras["paid_macro_damaged_goods"]
+    assert extras is not None
+    assert extras["k177_version"] == "2026-07-20"
+    assert paid["flag"] == "incomplete_capitulation"
+    assert paid["bounce_rr_unclear"] is True
+    assert paid["do_not_chase"] is True
+    assert extras["vix_vol_regime"]["flag"] == "vix_gt_20_sustain_caution"
+    assert extras["vix_vol_regime"]["log_only"] is True
+    assert extras["vix_vol_regime"]["no_size_gate_flip"] is True
+    assert extras["am_vix_sox_context"]["flag"] == "am_vix_short_sox_coil_12k"
+    assert extras["am_vix_sox_context"]["extends_k170"] is True
+    assert extras["moontower_mixologist"]["flag"] == "iv_percentile_skew_geometry"
+    assert extras["moontower_mixologist"]["screen_straddle_rr_strangle"] is True
+    assert extras["moontower_mixologist"]["not_cocktail_names"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -691,6 +796,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k172_version"] == "2026-07-17"
     assert report.macro_weather_extras["k173_version"] == "2026-07-18"
     assert report.macro_weather_extras["k174_version"] == "2026-07-19"
+    assert report.macro_weather_extras["k177_version"] == "2026-07-20"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -711,5 +817,9 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "macro_damaged_goods" in report.macro_weather_extras
     assert "cf_weekend_depth" in report.macro_weather_extras
     assert "lane_a_overnight" in report.macro_weather_extras
+    assert "paid_macro_damaged_goods" in report.macro_weather_extras
+    assert "vix_vol_regime" in report.macro_weather_extras
+    assert "am_vix_sox_context" in report.macro_weather_extras
+    assert "moontower_mixologist" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

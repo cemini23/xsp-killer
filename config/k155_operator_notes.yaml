@@ -200,3 +200,30 @@ k174:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K177 — Paid Macro damaged goods + Moontower mixologist (log-only; extends K174).
+k177:
+  version: "2026-07-20"
+  paid_macro_damaged_goods:
+    flag: incomplete_capitulation
+    bounce_rr_unclear: true
+    do_not_chase: true
+    note: "Paid Macro Charts DAMAGED GOODS Jul 19: momentum crash / incomplete capitulation — do not chase bounce until R/R clear"
+  vix_vol_regime:
+    flag: vix_gt_20_sustain_caution
+    log_only: true
+    no_size_gate_flip: true
+    note: "VIX >20 sustain = overnight Lane A vol-regime caution (log-only; no size gate flip)"
+  am_vix_sox_context:
+    flag: am_vix_short_sox_coil_12k
+    extends_k170: true
+    note: "Large AM VIX short + SOX coil ~12k = regime context (extends K170 SOX watch)"
+  moontower_mixologist:
+    flag: iv_percentile_skew_geometry
+    screen_straddle_rr_strangle: true
+    not_cocktail_names: true
+    note: "Moontower mixologist: screen via IV percentile × skew geometry (straddle/RR/strangle), not cocktail names / directional vibes"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

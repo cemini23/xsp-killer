@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 import xsp_killer.robinhood_mcp as robinhood_mcp
+from xsp_killer.live_gates import REQUIRED_STATEMENT
 from xsp_killer.rh_broker import fetch_robinhood_option_positions, rh_read_enabled
 from xsp_killer.robinhood_mcp import (
     RhMcpAccountRejected,
@@ -18,12 +19,31 @@ from xsp_killer.robinhood_mcp import (
     RhMcpNotReady,
     RobinhoodMCPAdapter,
     _review_grant_key,
+    _review_outcome_approved,
     live_exits_enabled,
     normalize_mcp_position,
     parse_mcp_http_response,
     pinned_account_on_token,
     rh_mcp_enabled,
 )
+
+
+def _arm_live_human_review(monkeypatch, tmp_path, variant: str = "promoted_v1") -> str:
+    """Dual-ack + review file so adapter place gates can pass in unit tests."""
+    ack = tmp_path / "LIVE_HUMAN_REVIEW.json"
+    ack.write_text(
+        json.dumps({"variant_id": variant, "statement": REQUIRED_STATEMENT}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XSP_LANE_A_LIVE_VARIANT_ID", variant)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK", variant)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK_PATH", str(ack))
+    monkeypatch.setattr(
+        robinhood_mcp,
+        "pinned_account_on_token",
+        lambda adapter=None: (True, "ok"),
+    )
+    return variant
 
 
 def test_default_token_path_api_exists():
@@ -384,6 +404,7 @@ def test_adapter_get_positions_mocked(tmp_path):
 
 
 def test_place_order_blocked_when_live_exits_off(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.delenv("RH_AGENTIC_ACCOUNT_ID", raising=False)
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -510,6 +531,7 @@ def test_place_order_denied_without_pinned_account(tmp_path, monkeypatch):
 
 
 def test_place_order_requires_matching_review_grant(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -540,6 +562,7 @@ def test_place_order_requires_matching_review_grant(tmp_path, monkeypatch):
 
 
 def test_review_grant_allows_matching_place(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -566,6 +589,7 @@ def test_review_grant_allows_matching_place(tmp_path, monkeypatch):
 
 
 def test_review_grant_allows_matching_place_legs_schema(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -593,6 +617,7 @@ def test_review_grant_allows_matching_place_legs_schema(tmp_path, monkeypatch):
 
 
 def test_place_order_account_number_pin_rejects_mismatch(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -622,6 +647,7 @@ def test_place_order_account_number_pin_rejects_mismatch(tmp_path, monkeypatch):
 
 
 def test_ratio_quantity_counts_toward_max_contracts(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -717,6 +743,7 @@ def test_kill_switch_file_oserror_fails_closed(tmp_path, monkeypatch):
 
 
 def test_review_with_warnings_does_not_grant_place(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -752,6 +779,7 @@ def test_review_with_warnings_does_not_grant_place(tmp_path, monkeypatch):
 
 
 def test_review_rejection_blocks_place_grant(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
@@ -912,6 +940,7 @@ def test_live_entries_disabled_by_default(monkeypatch):
 
 
 def test_open_leg_blocked_when_only_exits_enabled(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     """A buy-to-open must be gated by LIVE_ENTRIES, not LIVE_EXITS."""
     monkeypatch.delenv("XSP_LANE_A_LIVE_ENTRIES", raising=False)
     monkeypatch.delenv("XSP_LANE_A_LIVE_EXITS", raising=False)
@@ -944,6 +973,7 @@ def test_open_leg_blocked_when_only_exits_enabled(tmp_path, monkeypatch):
 
 
 def test_close_leg_blocked_when_only_entries_enabled(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     """A sell-to-close must stay gated by LIVE_EXITS even if entries are on."""
     monkeypatch.delenv("XSP_LANE_A_LIVE_ENTRIES", raising=False)
     monkeypatch.delenv("XSP_LANE_A_LIVE_EXITS", raising=False)
@@ -976,6 +1006,7 @@ def test_close_leg_blocked_when_only_entries_enabled(tmp_path, monkeypatch):
 
 
 def test_open_leg_allowed_when_live_entries_on(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
     monkeypatch.delenv("XSP_LANE_A_LIVE_ENTRIES", raising=False)
     monkeypatch.delenv("RH_AGENTIC_ACCOUNT_ID", raising=False)
     token = tmp_path / "token.json"
@@ -1251,3 +1282,133 @@ def test_pinned_account_on_token_mismatch(monkeypatch):
     ok, reason = pinned_account_on_token(Fake())  # type: ignore[arg-type]
     assert ok is False
     assert "not in get_accounts" in reason
+
+
+def test_review_nested_ok_false_does_not_grant(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    cfg = RhMcpConfig(
+        token_path=token,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=True,
+    )
+    order = {
+        "account_number": "agentic-1",
+        "legs": [{"option_id": "opt-1", "side": "sell", "position_effect": "close"}],
+        "quantity": "1",
+    }
+
+    def fake_http(url, body, headers):
+        return {"result": {"structuredContent": {"data": {"ok": False}}}}
+
+    adapter = RobinhoodMCPAdapter(config=cfg, http_post=fake_http)
+    adapter.review_option_order(order)
+    assert adapter._active_grant is None
+
+
+def test_review_requires_explicit_ok_or_approved():
+    ok, reason = _review_outcome_approved({})
+    assert ok is False
+    assert "explicit" in reason
+    ok, _ = _review_outcome_approved({"ok": True})
+    assert ok is True
+    ok, _ = _review_outcome_approved({"approved": True})
+    assert ok is True
+
+
+def test_place_rejects_sell_open_side_effect(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_ENTRIES", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    audit = tmp_path / "audit.jsonl"
+    cfg = RhMcpConfig(
+        token_path=token,
+        audit_log=audit,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpError, match="buy\\+open|sell\\+close"):
+        adapter.place_option_order(
+            {
+                "legs": [
+                    {
+                        "option_id": "opt-1",
+                        "side": "sell",
+                        "position_effect": "open",
+                    }
+                ],
+                "quantity": "1",
+            }
+        )
+
+
+def test_place_rejects_non_positive_quantity(tmp_path, monkeypatch):
+    _arm_live_human_review(monkeypatch, tmp_path)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    cfg = RhMcpConfig(
+        token_path=token,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpError, match="quantity"):
+        adapter.place_option_order(
+            {
+                "legs": [
+                    {
+                        "option_id": "opt-1",
+                        "side": "sell",
+                        "position_effect": "close",
+                    }
+                ],
+                "quantity": "0",
+            }
+        )
+
+
+def test_place_requires_human_ack_at_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("XSP_LANE_A_LIVE_EXITS", "true")
+    monkeypatch.delenv("XSP_LANE_A_LIVE_VARIANT_ID", raising=False)
+    monkeypatch.delenv("XSP_LANE_A_LIVE_HUMAN_ACK", raising=False)
+    monkeypatch.setattr(
+        robinhood_mcp,
+        "pinned_account_on_token",
+        lambda adapter=None: (True, "ok"),
+    )
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"access_token": "t"}), encoding="utf-8")
+    cfg = RhMcpConfig(
+        token_path=token,
+        agentic_account_id="agentic-1",
+        live_exits=True,
+        require_review_before_place=False,
+    )
+    adapter = RobinhoodMCPAdapter(
+        config=cfg, http_post=lambda *a: {"result": {"structuredContent": {"ok": True}}}
+    )
+    with pytest.raises(RhMcpError, match="human review blocked"):
+        adapter.place_option_order(
+            {
+                "legs": [
+                    {
+                        "option_id": "opt-1",
+                        "side": "sell",
+                        "position_effect": "close",
+                    }
+                ],
+                "quantity": "1",
+            }
+        )

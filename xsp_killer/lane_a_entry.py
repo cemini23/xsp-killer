@@ -1165,6 +1165,52 @@ def _live_entry_ref_id(instrument_id: str, day: str) -> str:
     return str(uuid.uuid5(_LIVE_ENTRY_REF_NAMESPACE, f"{instrument_id}:{day}"))
 
 
+def _count_owned_live_open(adapter: Any) -> int:
+    """Count open XSP/SPX option positions on the pinned RH account.
+
+    Used as a live-entry dedupe backstop when paper ``entry_log`` was reset.
+    Fail closed (treat as at-capacity) if the positions fetch errors.
+    """
+    try:
+        raw = adapter.call_tool("get_option_positions", {})
+        from xsp_killer.data_hazards import unwrap_tool_result
+
+        payload = unwrap_tool_result(raw)
+    except Exception:
+        return 10_000  # fail closed — block new live entries
+    rows: list[Any]
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = (
+            payload.get("results")
+            or payload.get("positions")
+            or payload.get("data", {}).get("results")
+            or []
+        )
+    else:
+        rows = []
+    allowed = {
+        s.upper() for s in (adapter.config.allowed_chain_symbols or ("XSP", "SPX"))
+    }
+    n = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        chain = str(
+            row.get("chain_symbol")
+            or row.get("underlying")
+            or row.get("symbol")
+            or ""
+        ).upper()
+        if allowed and chain and chain not in allowed:
+            continue
+        qty = float(row.get("quantity") or row.get("open_quantity") or 0)
+        if qty > 0:
+            n += 1
+    return n
+
+
 def _live_entry_safety_config(path: Path = DEFAULT_RULES) -> dict[str, float | bool]:
     cfg: dict[str, float | bool] = {
         "max_loss_usd": 150.0,
@@ -1364,12 +1410,32 @@ def _maybe_place_live_entry(
                 }
                 return
         ref_id = _live_entry_ref_id(contract["instrument_id"], today.isoformat())
+        # Live open-book dedupe: do not open another when RH already holds our
+        # owned live option UUIDs at/above max_open (survives paper soak reset).
+        owned_open = _count_owned_live_open(adapter)
+        max_open = max(1, int(getattr(entry_rules, "max_open_positions", 1) or 1))
+        if owned_open >= max_open:
+            decision.live_order = {
+                "placed": False,
+                "reason": (
+                    f"live skipped: {owned_open} owned RH open >= "
+                    f"max_open_positions {max_open}"
+                ),
+                "contract": contract,
+                "buying_power": buying_power,
+            }
+            return
         result = adapter.buy_to_open(
             instrument_id=contract["instrument_id"],
             limit_price=limit,
             quantity=qty,
             ref_id=ref_id,
+            variant_id=current_variant,
         )
+        live_oid = str(contract["instrument_id"])
+        if isinstance(decision.position, dict):
+            decision.position["live_option_id"] = live_oid
+            decision.position["instrument_id"] = live_oid
         decision.live_order = {
             "placed": True,
             "contract": contract,
@@ -1383,6 +1449,7 @@ def _maybe_place_live_entry(
             "premium_scale": 1.0,
             "reviewer": review.to_dict() if review is not None else None,
             "result": result,
+            "live_option_id": live_oid,
         }
     except Exception as exc:
         decision.live_order = {"placed": False, "error": str(exc)}

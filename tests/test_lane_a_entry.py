@@ -651,6 +651,7 @@ _ENTRY = types.SimpleNamespace(
     strike_max_steps_from_atm=1,
     strike_pick="cheapest_near_atm",
     quantity=1,
+    max_open_positions=1,
 )
 
 
@@ -671,10 +672,16 @@ def _human_promote(monkeypatch, tmp_path, variant_id: str = "xsp_lane_a_v2") -> 
 
 
 class _FakeEntryAdapter:
-    def __init__(self, *, ask=1.0, buying_power=1000.0):
+    def __init__(self, *, ask=1.0, buying_power=1000.0, open_positions=None):
         self._ask = ask
         self._bp = buying_power
         self.placed = None
+        self._open_positions = open_positions if open_positions is not None else []
+        self.config = type(
+            "Cfg",
+            (),
+            {"allowed_chain_symbols": ("XSP", "SPX")},
+        )()
 
     def select_entry_contract(self, **kw):
         return {
@@ -690,12 +697,20 @@ class _FakeEntryAdapter:
     def get_buying_power(self, account_number=None):
         return self._bp
 
-    def buy_to_open(self, *, instrument_id, limit_price, quantity, ref_id=None):
+    def call_tool(self, name, arguments=None):
+        if name == "get_option_positions":
+            return {"results": list(self._open_positions)}
+        raise AssertionError(f"unexpected call_tool {name}")
+
+    def buy_to_open(
+        self, *, instrument_id, limit_price, quantity, ref_id=None, variant_id=None
+    ):
         self.placed = {
             "instrument_id": instrument_id,
             "limit_price": limit_price,
             "quantity": quantity,
             "ref_id": ref_id,
+            "variant_id": variant_id,
         }
         return {"review": {"ok": 1}, "placed": {"id": "order-1"}}
 
@@ -935,3 +950,21 @@ def test_live_entry_reviewer_can_be_disabled(monkeypatch, tmp_path):
     # Reviewer off -> the wide-spread order is no longer vetoed by it.
     assert d.live_order["placed"] is True
     assert d.live_order["reviewer"] is None
+
+
+def test_live_entry_blocked_when_rh_open_at_max(monkeypatch, tmp_path):
+    _human_promote(monkeypatch, tmp_path)
+    _patch_green_regime(monkeypatch)
+    d = _mk_decision()
+    adapter = _FakeEntryAdapter(
+        ask=1.0,
+        buying_power=1000.0,
+        open_positions=[{"chain_symbol": "XSP", "quantity": 1}],
+    )
+    _patch_mcp(monkeypatch, enabled=True, entries=True, kill=False, adapter=adapter)
+    _maybe_place_live_entry(
+        d, lane_rules=_LANE, entry_rules=_ENTRY, today=date(2026, 7, 7)
+    )
+    assert d.live_order["placed"] is False
+    assert "owned RH open" in d.live_order["reason"]
+    assert adapter.placed is None

@@ -981,7 +981,18 @@ def test_dry_run_places_real_exit_when_live(monkeypatch, tmp_path):
 
     monkeypatch.setattr(lane_a_monitor, "RobinhoodMCPAdapter", FakeAdapter)
     uid = "11111111-1111-1111-1111-111111111111"
-    out = dry_run_exit_reviews_via_mcp([_mk_alert(uid)], [_mk_position(uid)])
+    state = {
+        "paper_positions": {
+            uid: {
+                "position_id": uid,
+                "live_option_id": uid,
+                "status": "open",
+            }
+        }
+    }
+    out = dry_run_exit_reviews_via_mcp(
+        [_mk_alert(uid)], [_mk_position(uid)], state=state
+    )
     place = seen["place"]
     assert place["legs"][0]["side"] == "sell"
     assert place["legs"][0]["position_effect"] == "close"
@@ -1431,3 +1442,107 @@ def test_runtime_naive_entry_timestamp_uses_strategy_local_et():
     assert [
         alert.exit_reason for alert in evaluate_exit_alerts(pos, rules, now_et=now)
     ] == ["hold_cap"]
+
+
+def test_build_close_order_fails_closed_without_limit(monkeypatch):
+    pos = LaneAPosition(
+        position_id="11111111-1111-1111-1111-111111111111",
+        chain_symbol="XSP",
+        option_type="call",
+        strike=6000.0,
+        expiration_date=date(2026, 8, 15),
+        quantity=1.0,
+        average_price=2.0,
+        mark_price=None,
+        dte=28,
+        bid_price=None,
+        ask_price=None,
+    )
+    monkeypatch.delenv("XSP_LANE_A_ALLOW_MARKET_EXITS", raising=False)
+    assert _build_close_order(pos.position_id, pos) is None
+    monkeypatch.setenv("XSP_LANE_A_ALLOW_MARKET_EXITS", "true")
+    order = _build_close_order(pos.position_id, pos)
+    assert order is not None
+    assert order["type"] == "market"
+
+
+def test_dry_run_live_skips_unowned_option(monkeypatch, tmp_path):
+    monkeypatch.setattr(lane_a_monitor, "rh_mcp_enabled", lambda: True)
+    _force_live(monkeypatch, True)
+    from xsp_killer.live_gates import REQUIRED_STATEMENT
+    import json
+
+    vid = "xsp_lane_a_v2"
+    ack = tmp_path / "LIVE_HUMAN_REVIEW.json"
+    ack.write_text(
+        json.dumps({"variant_id": vid, "statement": REQUIRED_STATEMENT}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XSP_LANE_A_LIVE_VARIANT_ID", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK_PATH", str(ack))
+
+    class FakeAdapter:
+        config = None
+
+        def review_option_order(self, order):
+            return {"data": {"ok": True}}
+
+        def place_option_order(self, order):
+            raise AssertionError("must not place unowned")
+
+        def phase1_canary_review(self, **kwargs):
+            raise AssertionError("canary must not run")
+
+    monkeypatch.setattr(lane_a_monitor, "RobinhoodMCPAdapter", FakeAdapter)
+    uid = "11111111-1111-1111-1111-111111111111"
+    other = "22222222-2222-2222-2222-222222222222"
+    state = {
+        "paper_positions": {
+            "paper:owned": {
+                "position_id": "paper:owned",
+                "live_option_id": other,
+                "status": "open",
+            }
+        }
+    }
+    out = dry_run_exit_reviews_via_mcp(
+        [_mk_alert(uid)], [_mk_position(uid)], state=state
+    )
+    assert out[0].get("skipped") == "not_owned_live_option"
+
+
+def test_dry_run_live_fails_closed_without_ownership_registry(monkeypatch, tmp_path):
+    monkeypatch.setattr(lane_a_monitor, "rh_mcp_enabled", lambda: True)
+    _force_live(monkeypatch, True)
+    from xsp_killer.live_gates import REQUIRED_STATEMENT
+    import json
+
+    vid = "xsp_lane_a_v2"
+    ack = tmp_path / "LIVE_HUMAN_REVIEW.json"
+    ack.write_text(
+        json.dumps({"variant_id": vid, "statement": REQUIRED_STATEMENT}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XSP_LANE_A_LIVE_VARIANT_ID", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK", vid)
+    monkeypatch.setenv("XSP_LANE_A_LIVE_HUMAN_ACK_PATH", str(ack))
+
+    class FakeAdapter:
+        config = None
+
+        def review_option_order(self, order):
+            return {"data": {"ok": True}}
+
+        def place_option_order(self, order):
+            raise AssertionError("must not place without registry")
+
+        def phase1_canary_review(self, **kwargs):
+            raise AssertionError("canary must not run")
+
+    monkeypatch.setattr(lane_a_monitor, "RobinhoodMCPAdapter", FakeAdapter)
+    uid = "11111111-1111-1111-1111-111111111111"
+    out = dry_run_exit_reviews_via_mcp(
+        [_mk_alert(uid)], [_mk_position(uid)], state={"paper_positions": {}}
+    )
+    assert out[0].get("skipped") == "no_owned_live_option_registry"

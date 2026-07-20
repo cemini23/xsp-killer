@@ -1143,13 +1143,45 @@ def _exit_ref_id(
     )
 
 
+def _allow_market_exits() -> bool:
+    """Opt-in only — default fail closed (no market sell-to-close)."""
+    return os.getenv("XSP_LANE_A_ALLOW_MARKET_EXITS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def owned_live_option_ids(state: dict[str, Any] | None) -> set[str]:
+    """Option UUIDs this system opened (stamped on paper rows after live place)."""
+    owned: set[str] = set()
+    if not isinstance(state, dict):
+        return owned
+    paper = state.get("paper_positions") or {}
+    if not isinstance(paper, dict):
+        return owned
+    for raw in paper.values():
+        if not isinstance(raw, dict):
+            continue
+        for key in ("live_option_id", "instrument_id", "option_id", "position_id"):
+            val = str(raw.get(key) or "").strip()
+            if val and _OPTION_UUID_RE.match(val):
+                owned.add(val)
+    return owned
+
+
 def _build_close_order(
     option_id: str,
     pos: "LaneAPosition",
     *,
     now_et: datetime | None = None,
-) -> dict[str, Any]:
-    """Sell-to-close legs[] order: limit at bid (GTH/wide) or mark; market if none."""
+) -> dict[str, Any] | None:
+    """Sell-to-close legs[] order: limit at bid (GTH/wide) or mark.
+
+    Returns ``None`` when no safe limit can be formed (fail closed). Market
+    exits require explicit ``XSP_LANE_A_ALLOW_MARKET_EXITS=true``.
+    """
     qty_int = max(1, int(round(pos.quantity or 1)))
     order: dict[str, Any] = {
         "legs": [
@@ -1167,9 +1199,11 @@ def _build_close_order(
     if limit is not None:
         order["type"] = "limit"
         order["price"] = f"{float(limit):.2f}"
-    else:
+        return order
+    if _allow_market_exits():
         order["type"] = "market"
-    return order
+        return order
+    return None
 
 
 def dry_run_exit_reviews_via_mcp(
@@ -1178,6 +1212,7 @@ def dry_run_exit_reviews_via_mcp(
     *,
     variant_monitor: bool = False,
     variant_id: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Exit signal handoff to Robinhood MCP: always review, place when live.
 
@@ -1192,6 +1227,8 @@ def dry_run_exit_reviews_via_mcp(
       synthetic positions never place.
     - Live placement uses a deterministic ``ref_id`` per (option, day, reason)
       so the 4 morning monitor runs can't create duplicate exit orders.
+    - Live places only act on option IDs owned by this system (stamped on paper
+      state after a live entry); foreign book positions are skipped.
     - When nothing is reviewable, a single buy-to-open proof-of-life canary
       review runs (gated by ``XSP_LANE_A_PHASE1_CANARY``); the canary never
       places an order.
@@ -1222,6 +1259,7 @@ def dry_run_exit_reviews_via_mcp(
         ok_review, _reason = human_variant_review_allows(check_id)
         if not ok_review:
             live = False
+    owned_ids = owned_live_option_ids(state)
     now_et = datetime.now(ET)
     day = now_et.date().isoformat()
     reviews: list[dict[str, Any]] = []
@@ -1242,9 +1280,10 @@ def dry_run_exit_reviews_via_mcp(
             continue
         # Wide-spread TP veto: do not review/place take-profit into thin books.
         # Stop-loss may still fire (risk) and prices off bid via _build_close_order.
-        if alert.exit_reason in ("take_profit", "upper_bb_rejection") and position_wide_spread(
-            pos
-        ):
+        if alert.exit_reason in (
+            "take_profit",
+            "upper_bb_rejection",
+        ) and position_wide_spread(pos):
             reviews.append(
                 {
                     "position_id": alert.position_id,
@@ -1256,6 +1295,17 @@ def dry_run_exit_reviews_via_mcp(
             )
             continue
         order = _build_close_order(option_id, pos, now_et=now_et)
+        if order is None:
+            reviews.append(
+                {
+                    "position_id": alert.position_id,
+                    "exit_reason": alert.exit_reason,
+                    "skipped": "no_safe_close_limit",
+                }
+            )
+            continue
+        if check_id:
+            order["xsp_killer_variant_id"] = check_id
         entry: dict[str, Any] = {
             "position_id": alert.position_id,
             "exit_reason": alert.exit_reason,
@@ -1265,6 +1315,18 @@ def dry_run_exit_reviews_via_mcp(
             entry["review"] = adapter.review_option_order(order)
             reviewable += 1
             if live:
+                if owned_ids and option_id not in owned_ids:
+                    entry["skipped"] = "not_owned_live_option"
+                    entry["live"] = False
+                    reviews.append(entry)
+                    continue
+                if not owned_ids:
+                    # Fail closed when live but no ownership registry — avoid
+                    # flattening foreign book positions.
+                    entry["skipped"] = "no_owned_live_option_registry"
+                    entry["live"] = False
+                    reviews.append(entry)
+                    continue
                 place_order = {
                     **order,
                     "ref_id": _exit_ref_id(
@@ -1565,6 +1627,7 @@ def run_monitor(
             classified,
             variant_monitor=_variant_monitor,
             variant_id=rules.logic_version,
+            state=state,
         )
 
     paper_positions_active = bool(state.get("paper_positions")) and not positions_override

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import secrets
 import sys
@@ -493,15 +494,52 @@ def pinned_account_on_token(
     )
 
 
+# Internal metadata never sent to Robinhood MCP HTTP.
+_INTERNAL_ORDER_KEYS = frozenset({"xsp_killer_variant_id", "lane_id"})
+
+_REVIEW_SIGNAL_KEYS = (
+    "ok",
+    "approved",
+    "rejected",
+    "rejection_reason",
+    "warnings",
+    "errors",
+    "order_checks",
+    "isError",
+)
+
+
+def _merge_nested_review_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Flatten nested ``data`` rejection/approval signals into the top level.
+
+    Broker/MCP wrappers sometimes nest business outcomes under ``data``. Without
+    this merge, ``{"data": {"ok": false}}`` would incorrectly mint a place grant.
+    """
+    merged = dict(result)
+    data = result.get("data")
+    if isinstance(data, dict):
+        for key in _REVIEW_SIGNAL_KEYS:
+            if key in data:
+                merged[key] = data[key]
+        nested = data.get("data")
+        if isinstance(nested, dict):
+            for key in _REVIEW_SIGNAL_KEYS:
+                if key in nested and key not in data:
+                    merged[key] = nested[key]
+    return merged
+
+
 def _review_outcome_approved(result: Any) -> tuple[bool, str]:
     """Return (approved, reason) for a ``review_option_order`` business outcome.
 
-    Fail closed unless the result is a dict with no rejection/warning/error
-    signals and no failing ``order_checks`` entries. Transport success alone
-    does not authorize a place grant (HCP I2).
+    Fail closed unless the result is a dict with an **explicit** positive
+    ``approved is True`` or ``ok is True``, no rejection/warning/error signals,
+    and no failing ``order_checks`` entries. Transport success alone does not
+    authorize a place grant (HCP I2). Nested ``data`` payloads are unwrapped.
     """
     if not isinstance(result, dict):
         return False, "review result is not a dict"
+    result = _merge_nested_review_payload(result)
     if result.get("isError") is True:
         return False, "review isError=true"
     if result.get("ok") is False:
@@ -532,7 +570,10 @@ def _review_outcome_approved(result: Any) -> tuple[bool, str]:
                 tokens = str(check).lower()
             if any(tok in tokens for tok in ("fail", "block", "reject")):
                 return False, f"review order_checks indicate failure: {check!r}"
-    return True, ""
+    # Require an explicit positive signal — absence of negatives is not enough.
+    if result.get("approved") is True or result.get("ok") is True:
+        return True, ""
+    return False, "review lacks explicit approved/ok=true"
 
 
 def _session_principal(
@@ -634,6 +675,11 @@ class RobinhoodMCPAdapter:
             invariant=invariant,
         )
 
+    @staticmethod
+    def _strip_internal_order_keys(args: dict[str, Any]) -> dict[str, Any]:
+        """Return MCP-bound args without local-only metadata keys."""
+        return {k: v for k, v in args.items() if k not in _INTERNAL_ORDER_KEYS}
+
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         if name not in ALLOWED_TOOLS:
             self._audit_deny(
@@ -643,9 +689,11 @@ class RobinhoodMCPAdapter:
                 invariant="I5",
             )
             raise RhMcpError(f"rh_mcp tool not allowlisted: {name}")
-        args = arguments or {}
+        args = dict(arguments or {})
         if name in WRITE_TOOLS:
             self._enforce_write_gates(name, args)
+        # Never forward local metadata (variant ack id, lane shadow tag) to RH.
+        wire_args = self._strip_internal_order_keys(args)
         token_data = _load_token(self.config.token_path)
         self._principal = _session_principal(token_data, config=self.config)
         bearer = _extract_bearer(token_data)
@@ -653,7 +701,7 @@ class RobinhoodMCPAdapter:
             "jsonrpc": MCP_JSONRPC_VERSION,
             "id": 1,
             "method": "tools/call",
-            "params": {"name": name, "arguments": args},
+            "params": {"name": name, "arguments": wire_args},
         }
         headers = {
             "Content-Type": "application/json",
@@ -683,19 +731,19 @@ class RobinhoodMCPAdapter:
                 return wrapped
             self._audit(name, args, ok=True, result=result)
             if name == "review_option_order":
-                self._last_review = {"arguments": args, "result": result}
+                self._last_review = {"arguments": wire_args, "result": result}
                 approved, reject_reason = _review_outcome_approved(result)
                 if approved:
                     self._active_grant = {
                         "grant_id": secrets.token_hex(8),
-                        "order_key": _review_grant_key(args),
+                        "order_key": _review_grant_key(wire_args),
                         "ts": datetime.now(timezone.utc).isoformat(),
                     }
                 else:
                     self._active_grant = None
                     self._audit(
                         name,
-                        args,
+                        wire_args,
                         ok=False,
                         error=reject_reason,
                         event="review_rejected",
@@ -705,7 +753,7 @@ class RobinhoodMCPAdapter:
                 self._active_grant = None
             return result
         except Exception as exc:
-            self._audit(name, args, ok=False, error=str(exc))
+            self._audit(name, wire_args, ok=False, error=str(exc))
             raise
 
     @staticmethod
@@ -748,9 +796,9 @@ class RobinhoodMCPAdapter:
             # Entries (buy-to-open) and exits (sell-to-close) are gated by
             # separate flags. Every leg must set position_effect to exactly
             # open or close — unknown/empty effects are denied (I7).
+            legs = _normalize_legs(args)
             effects = {
-                str(leg.get("position_effect") or "").lower()
-                for leg in _normalize_legs(args)
+                str(leg.get("position_effect") or "").lower() for leg in legs
             }
             bad_effect = not effects or any(
                 effect not in {"open", "close"} for effect in effects
@@ -762,6 +810,17 @@ class RobinhoodMCPAdapter:
                 )
                 self._audit_deny(name, args, reason=reason, invariant="I7")
                 raise RhMcpError(reason)
+            # Only buy-to-open and sell-to-close are permitted (no sell/open, etc).
+            for leg in legs:
+                side = str(leg.get("side") or "").lower()
+                effect = str(leg.get("position_effect") or "").lower()
+                if (side, effect) not in {("buy", "open"), ("sell", "close")}:
+                    reason = (
+                        "rh_mcp: place_option_order only allows buy+open or "
+                        f"sell+close (got side={side!r} effect={effect!r})"
+                    )
+                    self._audit_deny(name, args, reason=reason, invariant="I7")
+                    raise RhMcpError(reason)
             pinned = self.config.agentic_account_id
             if not pinned:
                 reason = (
@@ -770,6 +829,28 @@ class RobinhoodMCPAdapter:
                 )
                 self._audit_deny(name, args, reason=reason, invariant="I3")
                 raise RhMcpAccountRejected(reason)
+            # Two-key human promotion must sit at the money chokepoint
+            # (not only at strategy callers). Variant from order metadata
+            # or LIVE_VARIANT_ID.
+            from xsp_killer.live_gates import (
+                human_variant_review_allows,
+                live_variant_id,
+            )
+
+            variant = str(
+                args.get("xsp_killer_variant_id") or live_variant_id() or ""
+            ).strip()
+            ok_human, human_reason = human_variant_review_allows(variant)
+            if not ok_human:
+                self._audit_deny(
+                    name, args, reason=human_reason, invariant="I7"
+                )
+                raise RhMcpError(human_reason)
+            # Confirm pinned account is present on this OAuth token (Claudio/David).
+            token_ok, token_reason = pinned_account_on_token(self)
+            if not token_ok:
+                self._audit_deny(name, args, reason=token_reason, invariant="I3")
+                raise RhMcpAccountRejected(token_reason)
             needs_entry = "open" in effects
             needs_exit = "close" in effects
             if needs_entry and not live_entries_enabled(config=self.config):
@@ -788,16 +869,40 @@ class RobinhoodMCPAdapter:
                 )
                 self._audit_deny(name, args, reason=reason, invariant="I7")
                 raise RhMcpLiveExitsDisabled(reason)
-            qty = args.get("quantity") or args.get("contracts") or 1
+            qty_raw = args.get("quantity")
+            if qty_raw is None:
+                qty_raw = args.get("contracts")
+            if qty_raw is None:
+                reason = "rh_mcp: place_option_order requires quantity"
+                self._audit_deny(name, args, reason=reason, invariant="I5")
+                raise RhMcpError(reason)
             try:
-                qty_n = float(qty)
+                qty_n = float(qty_raw)
             except (TypeError, ValueError):
-                qty_n = 1.0
+                reason = f"rh_mcp: invalid quantity {qty_raw!r}"
+                self._audit_deny(name, args, reason=reason, invariant="I5")
+                raise RhMcpError(reason) from None
+            if not math.isfinite(qty_n) or qty_n <= 0 or qty_n != int(qty_n):
+                reason = (
+                    f"rh_mcp: quantity must be a positive integer (got {qty_raw!r})"
+                )
+                self._audit_deny(name, args, reason=reason, invariant="I5")
+                raise RhMcpError(reason)
             # Effective contracts = order quantity * max leg ratio_quantity.
             max_ratio = 1
-            for leg in _normalize_legs(args):
-                max_ratio = max(max_ratio, int(leg.get("ratio_quantity") or 1))
-            effective = qty_n * max_ratio
+            for leg in legs:
+                try:
+                    ratio = int(leg.get("ratio_quantity") or 1)
+                except (TypeError, ValueError):
+                    reason = "rh_mcp: invalid leg ratio_quantity"
+                    self._audit_deny(name, args, reason=reason, invariant="I5")
+                    raise RhMcpError(reason) from None
+                if ratio <= 0:
+                    reason = "rh_mcp: leg ratio_quantity must be positive"
+                    self._audit_deny(name, args, reason=reason, invariant="I5")
+                    raise RhMcpError(reason)
+                max_ratio = max(max_ratio, ratio)
+            effective = int(qty_n) * max_ratio
             if effective > self.config.max_contracts_per_order:
                 reason = (
                     f"rh_mcp: quantity {effective} exceeds max_contracts_per_order "
@@ -818,7 +923,7 @@ class RobinhoodMCPAdapter:
                 self._audit_deny(name, args, reason=reason, invariant="I3")
                 raise RhMcpAccountRejected(reason)
             if self.config.require_review_before_place:
-                grant_key = _review_grant_key(args)
+                grant_key = _review_grant_key(self._strip_internal_order_keys(args))
                 if self._active_grant is None:
                     self._audit_deny(
                         name,
@@ -1176,9 +1281,10 @@ class RobinhoodMCPAdapter:
         quantity: int = 1,
         time_in_force: str = "gfd",
         ref_id: str | None = None,
+        variant_id: str | None = None,
     ) -> dict[str, Any]:
         """Review then place a buy-to-open limit order (gated by write gates)."""
-        base = {
+        base: dict[str, Any] = {
             "legs": [
                 {
                     "option_id": instrument_id,
@@ -1192,6 +1298,8 @@ class RobinhoodMCPAdapter:
             "price": f"{float(limit_price):.2f}",
             "time_in_force": time_in_force,
         }
+        if variant_id:
+            base["xsp_killer_variant_id"] = str(variant_id).strip()
         review = self.review_option_order(base)
         place_order = dict(base)
         if ref_id:

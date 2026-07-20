@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from xsp_killer.lane_a_entry import (
     DEFAULT_RULES,
     DEFAULT_STATE,
+    EntryRules,
     open_paper_positions,
     run_paper_entry,
 )
@@ -60,9 +61,12 @@ def run_intraday_cycle(
 
     now = now_et or datetime.now(ET)
     evaluated_at = datetime.now(timezone.utc).isoformat()
-    ta_rules = TaRules.from_yaml(rules_path or DEFAULT_RULES)
+    path = rules_path or DEFAULT_RULES
+    ta_rules = TaRules.from_yaml(path)
+    entry_rules = EntryRules.from_yaml(path)
     state = load_state(state_path or DEFAULT_STATE)
     open_n = len(open_paper_positions(state))
+    max_open = max(1, int(entry_rules.max_open_positions or 1))
 
     report = IntradayReport(
         evaluated_at=evaluated_at,
@@ -82,7 +86,7 @@ def run_intraday_cycle(
             report.ta_snapshot = ta_exit.to_dict()
             report.ta_signal = ta_exit.signal
         mon = run_monitor(
-            rules_path=rules_path,
+            rules_path=path,
             state_path=state_path,
             now_et=now,
             publish_intel=publish_intel,
@@ -92,8 +96,18 @@ def run_intraday_cycle(
         report.monitor = mon.to_dict()
         report.exit_alerts_n = len(mon.alerts)
         write_report(mon, DEFAULT_OUT)
-        _write_intraday_brief(report)
-        return report
+        # If book is full, stop after exits. If room remains (max_open > open_n),
+        # continue into entry evaluation below.
+        if open_n >= max_open:
+            _write_intraday_brief(report)
+            return report
+        # Reload state after monitor mutates paper exits.
+        state = load_state(state_path or DEFAULT_STATE)
+        open_n = len(open_paper_positions(state))
+        report.open_positions_n = open_n
+        if open_n >= max_open:
+            _write_intraday_brief(report)
+            return report
 
     if not report.in_rth:
         report.skip_reason = "outside RTH"
@@ -109,6 +123,11 @@ def run_intraday_cycle(
         _write_intraday_brief(report)
         return report
 
+    if open_n >= max_open:
+        report.skip_reason = f"max open positions ({max_open})"
+        _write_intraday_brief(report)
+        return report
+
     if not ta.entry_ok:
         report.skip_reason = f"no BB bounce: {ta.detail}"
         _write_intraday_brief(report)
@@ -116,7 +135,7 @@ def run_intraday_cycle(
 
     report.entry_attempted = True
     decision = run_paper_entry(
-        rules_path=rules_path,
+        rules_path=path,
         state_path=state_path,
         now_et=now,
         intraday=True,

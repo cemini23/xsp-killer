@@ -227,3 +227,24 @@ k177:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K178 — Capital Flows equity cliff teaser (log-only; extends K177).
+k178:
+  version: "2026-07-21"
+  cf_equity_cliff_teaser:
+    flag: spx_near_ath_flow_picture_pending
+    spx_drawdown_from_ath_pct: -2.18
+    do_not_chase_on_free_teaser: true
+    wait_paid_flow_picture: true
+    note: "CF Jul 21 teaser: SPX only −2.18% from ATH; do not chase bounce/cliff on free teaser — wait paid flow-driver + HF positioning picture"
+  lane_a_overnight:
+    keep_tight_vs_k177: true
+    note: "Keep Lane A overnight criteria tight vs prior Damaged Goods / momentum caution (K177)"
+  cme_single_stock_futures:
+    context_only: true
+    no_product_change: true
+    note: "CME single-stock futures webinar = future leverage channel Context — no product change yet"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

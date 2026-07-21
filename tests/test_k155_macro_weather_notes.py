@@ -21,6 +21,7 @@ from xsp_killer.macro_weather_notes import (
     load_k173_notes,
     load_k174_notes,
     load_k177_notes,
+    load_k178_notes,
 )
 
 
@@ -664,7 +665,8 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert extras["cf_weekend_depth"][
         "view_changed_unwind_carry_weekend_depth"
     ] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k172_k173"] is True
+    # k178 overwrites lane_a_overnight with keep_tight_vs_k177
+    assert extras["lane_a_overnight"]["keep_tight_vs_k177"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -773,6 +775,92 @@ def test_build_monitor_macro_weather_extras_k177_from_prod_config():
     assert extras["constraints"]["no_strategy_code"] is True
 
 
+def test_load_k178_notes_prod_config():
+    notes = load_k178_notes()
+    teaser = notes["cf_equity_cliff_teaser"]
+    assert notes.get("version") == "2026-07-21"
+    assert teaser["flag"] == "spx_near_ath_flow_picture_pending"
+    assert teaser["spx_drawdown_from_ath_pct"] == -2.18
+    assert teaser["do_not_chase_on_free_teaser"] is True
+    assert teaser["wait_paid_flow_picture"] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k177"] is True
+    assert notes["cme_single_stock_futures"]["context_only"] is True
+    assert notes["cme_single_stock_futures"]["no_product_change"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k178(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k178": {
+                    "version": "2026-07-21",
+                    "cf_equity_cliff_teaser": {
+                        "flag": "spx_near_ath_flow_picture_pending",
+                        "spx_drawdown_from_ath_pct": -2.18,
+                        "do_not_chase_on_free_teaser": True,
+                        "wait_paid_flow_picture": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k177": True,
+                    },
+                    "cme_single_stock_futures": {
+                        "context_only": True,
+                        "no_product_change": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k178_notes=load_k178_notes(cfg),
+        notes_path=cfg,
+    )
+    teaser = extras["cf_equity_cliff_teaser"]
+    assert extras is not None
+    assert extras["k178_version"] == "2026-07-21"
+    assert teaser["flag"] == "spx_near_ath_flow_picture_pending"
+    assert teaser["spx_drawdown_from_ath_pct"] == -2.18
+    assert teaser["do_not_chase_on_free_teaser"] is True
+    assert teaser["wait_paid_flow_picture"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k177"] is True
+    assert extras["cme_single_stock_futures"]["context_only"] is True
+    assert extras["cme_single_stock_futures"]["no_product_change"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k178_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    teaser = extras["cf_equity_cliff_teaser"]
+    assert extras is not None
+    assert extras["k178_version"] == "2026-07-21"
+    assert teaser["flag"] == "spx_near_ath_flow_picture_pending"
+    assert teaser["spx_drawdown_from_ath_pct"] == -2.18
+    assert teaser["do_not_chase_on_free_teaser"] is True
+    assert teaser["wait_paid_flow_picture"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k177"] is True
+    assert extras["cme_single_stock_futures"]["context_only"] is True
+    assert extras["cme_single_stock_futures"]["no_product_change"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     from xsp_killer.lane_a_monitor import run_monitor
 
@@ -797,6 +885,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k173_version"] == "2026-07-18"
     assert report.macro_weather_extras["k174_version"] == "2026-07-19"
     assert report.macro_weather_extras["k177_version"] == "2026-07-20"
+    assert report.macro_weather_extras["k178_version"] == "2026-07-21"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -821,5 +910,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "vix_vol_regime" in report.macro_weather_extras
     assert "am_vix_sox_context" in report.macro_weather_extras
     assert "moontower_mixologist" in report.macro_weather_extras
+    assert "cf_equity_cliff_teaser" in report.macro_weather_extras
+    assert "cme_single_stock_futures" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

@@ -71,6 +71,11 @@ def load_k177_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k177")
 
 
+def load_k178_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K178 CF equity-cliff teaser notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k178")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -121,9 +126,10 @@ def build_monitor_macro_weather_extras(
     k173_notes: dict[str, Any] | None = None,
     k174_notes: dict[str, Any] | None = None,
     k177_notes: dict[str, Any] | None = None,
+    k178_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K177 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K178 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -138,6 +144,7 @@ def build_monitor_macro_weather_extras(
     k173 = k173_notes if k173_notes is not None else load_k173_notes(path)
     k174 = k174_notes if k174_notes is not None else load_k174_notes(path)
     k177 = k177_notes if k177_notes is not None else load_k177_notes(path)
+    k178 = k178_notes if k178_notes is not None else load_k178_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -254,6 +261,17 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k177:
                 extras[key] = k177[key]
+
+    if k178:
+        extras["k178_version"] = k178.get("version")
+        for key in (
+            "cf_equity_cliff_teaser",
+            "lane_a_overnight",
+            "cme_single_stock_futures",
+            "constraints",
+        ):
+            if key in k178:
+                extras[key] = k178[key]
 
     return extras
 

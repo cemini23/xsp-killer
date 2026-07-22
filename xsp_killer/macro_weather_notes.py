@@ -76,6 +76,11 @@ def load_k178_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k178")
 
 
+def load_k182_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K182 illiquid IV map + HF fragile positioning notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k182")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -127,9 +132,10 @@ def build_monitor_macro_weather_extras(
     k174_notes: dict[str, Any] | None = None,
     k177_notes: dict[str, Any] | None = None,
     k178_notes: dict[str, Any] | None = None,
+    k182_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K178 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K182 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -145,6 +151,7 @@ def build_monitor_macro_weather_extras(
     k174 = k174_notes if k174_notes is not None else load_k174_notes(path)
     k177 = k177_notes if k177_notes is not None else load_k177_notes(path)
     k178 = k178_notes if k178_notes is not None else load_k178_notes(path)
+    k182 = k182_notes if k182_notes is not None else load_k182_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -272,6 +279,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k178:
                 extras[key] = k178[key]
+
+    if k182:
+        extras["k182_version"] = k182.get("version")
+        for key in (
+            "liquid_to_illiquid_iv_map",
+            "arxiv_2607_19030",
+            "hf_fragile_positioning",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k182:
+                extras[key] = k182[key]
 
     return extras
 

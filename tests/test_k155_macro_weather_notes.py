@@ -22,6 +22,7 @@ from xsp_killer.macro_weather_notes import (
     load_k174_notes,
     load_k177_notes,
     load_k178_notes,
+    load_k182_notes,
 )
 
 
@@ -665,8 +666,8 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert extras["cf_weekend_depth"][
         "view_changed_unwind_carry_weekend_depth"
     ] is True
-    # k178 overwrites lane_a_overnight with keep_tight_vs_k177
-    assert extras["lane_a_overnight"]["keep_tight_vs_k177"] is True
+    # k182 overwrites lane_a_overnight with keep_tight_vs_k178
+    assert extras["lane_a_overnight"]["keep_tight_vs_k178"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -854,9 +855,113 @@ def test_build_monitor_macro_weather_extras_k178_from_prod_config():
     assert teaser["spx_drawdown_from_ath_pct"] == -2.18
     assert teaser["do_not_chase_on_free_teaser"] is True
     assert teaser["wait_paid_flow_picture"] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k177"] is True
+    # k182 overwrites lane_a_overnight with keep_tight_vs_k178
+    assert extras["lane_a_overnight"]["keep_tight_vs_k178"] is True
     assert extras["cme_single_stock_futures"]["context_only"] is True
     assert extras["cme_single_stock_futures"]["no_product_change"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_load_k182_notes_prod_config():
+    notes = load_k182_notes()
+    iv_map = notes["liquid_to_illiquid_iv_map"]
+    hf = notes["hf_fragile_positioning"]
+    assert notes.get("version") == "2026-07-22"
+    assert iv_map["flag"] == "prefer_spx_es_benchmark_when_xsp_thin"
+    assert iv_map["prefer_liquid_benchmark"] is True
+    assert iv_map["no_sparse_xsp_only_calibration"] is True
+    assert notes["arxiv_2607_19030"]["context_only"] is True
+    assert notes["arxiv_2607_19030"]["no_energy_book"] is True
+    assert hf["flag"] == "cf_jul22_hf_fragile_after_equity_cliff"
+    assert hf["do_not_add_size_on_bounce"] is True
+    assert hf["wait_paid_flow_confirm"] is True
+    assert hf["extends_k178_k177"] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k178"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k182(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k182": {
+                    "version": "2026-07-22",
+                    "liquid_to_illiquid_iv_map": {
+                        "flag": "prefer_spx_es_benchmark_when_xsp_thin",
+                        "prefer_liquid_benchmark": True,
+                        "no_sparse_xsp_only_calibration": True,
+                    },
+                    "arxiv_2607_19030": {
+                        "context_only": True,
+                        "no_energy_book": True,
+                    },
+                    "hf_fragile_positioning": {
+                        "flag": "cf_jul22_hf_fragile_after_equity_cliff",
+                        "do_not_add_size_on_bounce": True,
+                        "wait_paid_flow_confirm": True,
+                        "extends_k178_k177": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k178": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k182_notes=load_k182_notes(cfg),
+        notes_path=cfg,
+    )
+    iv_map = extras["liquid_to_illiquid_iv_map"]
+    hf = extras["hf_fragile_positioning"]
+    assert extras is not None
+    assert extras["k182_version"] == "2026-07-22"
+    assert iv_map["flag"] == "prefer_spx_es_benchmark_when_xsp_thin"
+    assert iv_map["prefer_liquid_benchmark"] is True
+    assert iv_map["no_sparse_xsp_only_calibration"] is True
+    assert extras["arxiv_2607_19030"]["context_only"] is True
+    assert extras["arxiv_2607_19030"]["no_energy_book"] is True
+    assert hf["flag"] == "cf_jul22_hf_fragile_after_equity_cliff"
+    assert hf["do_not_add_size_on_bounce"] is True
+    assert hf["wait_paid_flow_confirm"] is True
+    assert hf["extends_k178_k177"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k178"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k182_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    iv_map = extras["liquid_to_illiquid_iv_map"]
+    hf = extras["hf_fragile_positioning"]
+    assert extras is not None
+    assert extras["k182_version"] == "2026-07-22"
+    assert iv_map["flag"] == "prefer_spx_es_benchmark_when_xsp_thin"
+    assert iv_map["prefer_liquid_benchmark"] is True
+    assert iv_map["no_sparse_xsp_only_calibration"] is True
+    assert extras["arxiv_2607_19030"]["context_only"] is True
+    assert extras["arxiv_2607_19030"]["no_energy_book"] is True
+    assert hf["flag"] == "cf_jul22_hf_fragile_after_equity_cliff"
+    assert hf["do_not_add_size_on_bounce"] is True
+    assert hf["wait_paid_flow_confirm"] is True
+    assert hf["extends_k178_k177"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k178"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -886,6 +991,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k174_version"] == "2026-07-19"
     assert report.macro_weather_extras["k177_version"] == "2026-07-20"
     assert report.macro_weather_extras["k178_version"] == "2026-07-21"
+    assert report.macro_weather_extras["k182_version"] == "2026-07-22"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -912,5 +1018,8 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "moontower_mixologist" in report.macro_weather_extras
     assert "cf_equity_cliff_teaser" in report.macro_weather_extras
     assert "cme_single_stock_futures" in report.macro_weather_extras
+    assert "liquid_to_illiquid_iv_map" in report.macro_weather_extras
+    assert "arxiv_2607_19030" in report.macro_weather_extras
+    assert "hf_fragile_positioning" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

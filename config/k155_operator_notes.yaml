@@ -248,3 +248,29 @@ k178:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K182 — Illiquid IV mapper + CF HF fragile positioning (log-only; extends K178).
+k182:
+  version: "2026-07-22"
+  liquid_to_illiquid_iv_map:
+    flag: prefer_spx_es_benchmark_when_xsp_thin
+    prefer_liquid_benchmark: true
+    no_sparse_xsp_only_calibration: true
+    note: "When Mini-SPX/XSP quotes thin, prefer SPX/ES liquid surface as benchmark mapper — do not force sparse XSP-only calibration"
+  arxiv_2607_19030:
+    context_only: true
+    no_energy_book: true
+    note: "arXiv 2607.19030 liquid→illiquid IV map (Brent→Gasoil pattern) = methodology Context only — no energy book"
+  hf_fragile_positioning:
+    flag: cf_jul22_hf_fragile_after_equity_cliff
+    do_not_add_size_on_bounce: true
+    wait_paid_flow_confirm: true
+    extends_k178_k177: true
+    note: "CF Jul 22: HF positioning growing fragile after Jul 21 equity-cliff teaser — no size-add on bounce until paid flow confirms"
+  lane_a_overnight:
+    keep_tight_vs_k178: true
+    note: "Keep Lane A overnight criteria tight vs K178 cliff / K177 Damaged Goods caution stack"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

@@ -327,3 +327,27 @@ k193:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K195 — aisuite multi-provider shape + CF crude/positioning teaser (log-only; extends K193).
+k195:
+  version: "2026-07-25"
+  aisuite:
+    flag: andrewyng_aisuite_mit_context
+    context_only: true
+    provider_uniform_client_shape: true
+    no_stack_rewrite: true
+    no_adapter_until_spike_approved: true
+    note: "aisuite (andrewyng/aisuite MIT): context only — steal provider-uniform client shape for future signal-eval failovers; no stack rewrite; no adapter until spike approved"
+  cf_crude_positioning_teaser:
+    flag: macro_positioning_crude_risk_title_only
+    title_only_not_signal: true
+    confirm_report_before_overnight_size: true
+    note: "CF titles macro positioning + crude risk (paywalled teaser) — title ≠ signal; confirm report before overnight size changes"
+  lane_a_overnight:
+    keep_tight_vs_k193: true
+    no_posture_change_on_title_only: true
+    note: "No overnight size on CF crude/positioning title alone; keep tight vs K193 FFJ / SPX selling / K191 treasury caution stack"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code until adapter spike approved; weather notes only"

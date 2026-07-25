@@ -25,6 +25,7 @@ from xsp_killer.macro_weather_notes import (
     load_k182_notes,
     load_k191_notes,
     load_k193_notes,
+    load_k195_notes,
 )
 
 
@@ -668,8 +669,8 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert extras["cf_weekend_depth"][
         "view_changed_unwind_carry_weekend_depth"
     ] is True
-    # k193 overwrites lane_a_overnight with keep_tight_vs_k191
-    assert extras["lane_a_overnight"]["keep_tight_vs_k191"] is True
+    # k195 overwrites lane_a_overnight with keep_tight_vs_k193
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -857,8 +858,8 @@ def test_build_monitor_macro_weather_extras_k178_from_prod_config():
     assert teaser["spx_drawdown_from_ath_pct"] == -2.18
     assert teaser["do_not_chase_on_free_teaser"] is True
     assert teaser["wait_paid_flow_picture"] is True
-    # k193 overwrites lane_a_overnight with keep_tight_vs_k191
-    assert extras["lane_a_overnight"]["keep_tight_vs_k191"] is True
+    # k195 overwrites lane_a_overnight with keep_tight_vs_k193
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
     assert extras["cme_single_stock_futures"]["context_only"] is True
     assert extras["cme_single_stock_futures"]["no_product_change"] is True
     assert extras["constraints"]["no_integral_solver"] is True
@@ -963,8 +964,8 @@ def test_build_monitor_macro_weather_extras_k182_from_prod_config():
     assert hf["do_not_add_size_on_bounce"] is True
     assert hf["wait_paid_flow_confirm"] is True
     assert hf["extends_k178_k177"] is True
-    # k193 overwrites lane_a_overnight with keep_tight_vs_k191
-    assert extras["lane_a_overnight"]["keep_tight_vs_k191"] is True
+    # k195 overwrites lane_a_overnight with keep_tight_vs_k193
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1062,8 +1063,8 @@ def test_build_monitor_macro_weather_extras_k191_from_prod_config():
     assert rh["distribution_context"] is True
     assert rh["no_new_rh_sleeve"] is True
     assert extras["caution_stack"]["continue_hf_fragile_damaged_goods"] is True
-    # k193 overwrites lane_a_overnight with keep_tight_vs_k191
-    assert extras["lane_a_overnight"]["keep_tight_vs_k191"] is True
+    # k195 overwrites lane_a_overnight with keep_tight_vs_k193
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1173,7 +1174,109 @@ def test_build_monitor_macro_weather_extras_k193_from_prod_config():
     assert teaser["confirm_livestream_or_report"] is True
     assert extras["clarity_act_wublock"]["awareness_only"] is True
     assert extras["clarity_act_wublock"]["no_action_unless_rh_chain_overlap"] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k191"] is True
+    # k195 overwrites lane_a_overnight with keep_tight_vs_k193
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
+    assert extras["lane_a_overnight"]["no_posture_change_on_title_only"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_load_k195_notes_prod_config():
+    notes = load_k195_notes()
+    aisuite = notes["aisuite"]
+    teaser = notes["cf_crude_positioning_teaser"]
+    assert notes.get("version") == "2026-07-25"
+    assert aisuite["flag"] == "andrewyng_aisuite_mit_context"
+    assert aisuite["context_only"] is True
+    assert aisuite["provider_uniform_client_shape"] is True
+    assert aisuite["no_stack_rewrite"] is True
+    assert aisuite["no_adapter_until_spike_approved"] is True
+    assert teaser["flag"] == "macro_positioning_crude_risk_title_only"
+    assert teaser["title_only_not_signal"] is True
+    assert teaser["confirm_report_before_overnight_size"] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k193"] is True
+    assert notes["lane_a_overnight"]["no_posture_change_on_title_only"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k195(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k195": {
+                    "version": "2026-07-25",
+                    "aisuite": {
+                        "flag": "andrewyng_aisuite_mit_context",
+                        "context_only": True,
+                        "provider_uniform_client_shape": True,
+                        "no_stack_rewrite": True,
+                        "no_adapter_until_spike_approved": True,
+                    },
+                    "cf_crude_positioning_teaser": {
+                        "flag": "macro_positioning_crude_risk_title_only",
+                        "title_only_not_signal": True,
+                        "confirm_report_before_overnight_size": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k193": True,
+                        "no_posture_change_on_title_only": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k195_notes=load_k195_notes(cfg),
+        notes_path=cfg,
+    )
+    aisuite = extras["aisuite"]
+    teaser = extras["cf_crude_positioning_teaser"]
+    assert extras is not None
+    assert extras["k195_version"] == "2026-07-25"
+    assert aisuite["flag"] == "andrewyng_aisuite_mit_context"
+    assert aisuite["context_only"] is True
+    assert aisuite["provider_uniform_client_shape"] is True
+    assert aisuite["no_stack_rewrite"] is True
+    assert aisuite["no_adapter_until_spike_approved"] is True
+    assert teaser["flag"] == "macro_positioning_crude_risk_title_only"
+    assert teaser["title_only_not_signal"] is True
+    assert teaser["confirm_report_before_overnight_size"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
+    assert extras["lane_a_overnight"]["no_posture_change_on_title_only"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_k195_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    aisuite = extras["aisuite"]
+    teaser = extras["cf_crude_positioning_teaser"]
+    assert extras is not None
+    assert extras["k195_version"] == "2026-07-25"
+    assert aisuite["flag"] == "andrewyng_aisuite_mit_context"
+    assert aisuite["context_only"] is True
+    assert aisuite["provider_uniform_client_shape"] is True
+    assert aisuite["no_stack_rewrite"] is True
+    assert aisuite["no_adapter_until_spike_approved"] is True
+    assert teaser["flag"] == "macro_positioning_crude_risk_title_only"
+    assert teaser["title_only_not_signal"] is True
+    assert teaser["confirm_report_before_overnight_size"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k193"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_title_only"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1207,6 +1310,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k182_version"] == "2026-07-22"
     assert report.macro_weather_extras["k191_version"] == "2026-07-23"
     assert report.macro_weather_extras["k193_version"] == "2026-07-24"
+    assert report.macro_weather_extras["k195_version"] == "2026-07-25"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -1242,5 +1346,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "ffj_newsflow" in report.macro_weather_extras
     assert "cf_spx_selling_pressure_teaser" in report.macro_weather_extras
     assert "clarity_act_wublock" in report.macro_weather_extras
+    assert "aisuite" in report.macro_weather_extras
+    assert "cf_crude_positioning_teaser" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

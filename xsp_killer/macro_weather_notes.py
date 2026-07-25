@@ -81,6 +81,16 @@ def load_k182_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k182")
 
 
+def load_k191_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K191 treasury compression + Robinhood Chain notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k191")
+
+
+def load_k193_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K193 FFJ newsflow + SPX selling-pressure teaser notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k193")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -133,9 +143,11 @@ def build_monitor_macro_weather_extras(
     k177_notes: dict[str, Any] | None = None,
     k178_notes: dict[str, Any] | None = None,
     k182_notes: dict[str, Any] | None = None,
+    k191_notes: dict[str, Any] | None = None,
+    k193_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K182 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K193 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -152,6 +164,8 @@ def build_monitor_macro_weather_extras(
     k177 = k177_notes if k177_notes is not None else load_k177_notes(path)
     k178 = k178_notes if k178_notes is not None else load_k178_notes(path)
     k182 = k182_notes if k182_notes is not None else load_k182_notes(path)
+    k191 = k191_notes if k191_notes is not None else load_k191_notes(path)
+    k193 = k193_notes if k193_notes is not None else load_k193_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -291,6 +305,30 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k182:
                 extras[key] = k182[key]
+
+    if k191:
+        extras["k191_version"] = k191.get("version")
+        for key in (
+            "treasury_compression_teaser",
+            "robinhood_chain",
+            "caution_stack",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k191:
+                extras[key] = k191[key]
+
+    if k193:
+        extras["k193_version"] = k193.get("version")
+        for key in (
+            "ffj_newsflow",
+            "cf_spx_selling_pressure_teaser",
+            "clarity_act_wublock",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k193:
+                extras[key] = k193[key]
 
     return extras
 

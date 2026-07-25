@@ -274,3 +274,56 @@ k182:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K191 — CF Treasury compression teaser + Robinhood Chain (log-only; extends K182).
+k191:
+  version: "2026-07-23"
+  treasury_compression_teaser:
+    flag: cf_treasury_compressing_for_move
+    vol_regime_watch_only: true
+    no_lane_a_size_on_free_teaser: true
+    note: "CF Treasury markets compressing for a move (teaser) = vol/regime watch only — no Lane A size on free teaser"
+  robinhood_chain:
+    flag: arbitrum_l2_stock_tokens_rwa
+    distribution_context: true
+    no_new_rh_sleeve: true
+    note: "WuBlock: Robinhood Chain Arbitrum L2 / Stock Tokens / RWA = distribution Context for RH equity-options franchise — not a new trading sleeve"
+  caution_stack:
+    continue_hf_fragile_damaged_goods: true
+    note: "Continue prior HF-fragile / Damaged Goods caution stack (K182/K178/K177)"
+  lane_a_overnight:
+    keep_tight_vs_k182: true
+    note: "Keep Lane A overnight tight vs K182 HF-fragile / Damaged Goods caution stack — no size on free treasury teaser"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_new_rh_sleeve: true
+    note: "Honors brief No code for trading path; weather notes only"
+
+# K193 — FFJ news-flow FP gates + CF SPX selling-pressure teaser (log-only; extends K191).
+k193:
+  version: "2026-07-24"
+  ffj_newsflow:
+    flag: arxiv_2607_20645_not_deployment_ready
+    best_all_label_match_pct: 52.4
+    require_false_positive_budget: true
+    prefer_low_fp_models: true
+    human_gate_required: true
+    note: "FFJ (arXiv 2607.20645): agent news triage best all-label match only 52.4%; FP rates ~1–32% — not deployment-ready without explicit FP budget, low-FP preference, and human gate"
+  cf_spx_selling_pressure_teaser:
+    flag: spx_selling_pressure_title_only
+    title_only_not_signal: true
+    confirm_livestream_or_report: true
+    note: "CF 2026-07-24 titles S&P500 selling pressure (paywalled) — title-only is not a signal; confirm livestream/report before overnight posture change"
+  clarity_act_wublock:
+    awareness_only: true
+    no_action_unless_rh_chain_overlap: true
+    note: "Clarity Act politics (WuBlock) = macro/crypto noise for XSP unless RH Chain / equity regime overlap — awareness only"
+  lane_a_overnight:
+    keep_tight_vs_k191: true
+    no_posture_change_on_title_only: true
+    note: "No overnight posture change on CF selling-pressure title alone; keep tight vs K191 treasury / HF-fragile caution stack"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

@@ -351,3 +351,29 @@ k195:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code until adapter spike approved; weather notes only"
+
+# K196 — Macro EXIT TO THE LEFT + Moontower hedging + attention SV (log-only; extends K195).
+k196:
+  version: "2026-07-27"
+  macro_exit_to_the_left:
+    flag: something_doesnt_feel_right_regime_watch
+    regime_watch_only: true
+    no_chase_until_bounce_breakdown_resolves: true
+    note: "Macro Charts paid Something Doesn't Feel Right: EXIT TO THE LEFT / positioning–vol confluence — regime watch only; no chase until bounce/breakdown resolves"
+  moontower_hedging:
+    flag: hedge_cost_smart_flow_overhedge
+    lane_b_tolerate_residual_delta: true
+    no_mechanical_hedge_every_tick: true
+    note: "Moontower hedging pedagogy: hedge cost + smart-flow overhedge lore for Lane B — tolerate intentional residual delta; do not mechanical-hedge every tick"
+  attention_sv_arxiv_2607_22254:
+    watch_only: true
+    no_lane_change_without_calibration: true
+    note: "arXiv 2607.22254 attention→SV = Watch only — no Lane change without calibration evidence"
+  lane_a_overnight:
+    keep_tight_vs_k195: true
+    keep_exits_tight: true
+    note: "Keep Lane A overnight exits tight vs K195 crude/positioning / prior caution stack"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

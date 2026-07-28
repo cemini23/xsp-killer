@@ -1389,8 +1389,9 @@ def test_build_monitor_macro_weather_extras_k196_from_prod_config():
     assert hedge["no_mechanical_hedge_every_tick"] is True
     assert attention["watch_only"] is True
     assert attention["no_lane_change_without_calibration"] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k195"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight"] is True
+    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
+    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
+    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 

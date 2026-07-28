@@ -101,6 +101,11 @@ def load_k196_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k196")
 
 
+def load_k198_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K198 IV concavity + Macro Korea/WTI/FOMC regime notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k198")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -157,9 +162,10 @@ def build_monitor_macro_weather_extras(
     k193_notes: dict[str, Any] | None = None,
     k195_notes: dict[str, Any] | None = None,
     k196_notes: dict[str, Any] | None = None,
+    k198_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K196 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K198 YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -180,6 +186,7 @@ def build_monitor_macro_weather_extras(
     k193 = k193_notes if k193_notes is not None else load_k193_notes(path)
     k195 = k195_notes if k195_notes is not None else load_k195_notes(path)
     k196 = k196_notes if k196_notes is not None else load_k196_notes(path)
+    k198 = k198_notes if k198_notes is not None else load_k198_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -366,6 +373,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k196:
                 extras[key] = k196[key]
+
+    if k198:
+        extras["k198_version"] = k198.get("version")
+        for key in (
+            "iv_concavity_arxiv_2607_24680",
+            "lane_b_leaps_hedge_rolls",
+            "macro_korea_wti_fomc",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k198:
+                extras[key] = k198[key]
 
     return extras
 

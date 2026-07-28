@@ -377,3 +377,28 @@ k196:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# K198 — IV concavity + Macro Korea/WTI/FOMC regime (log-only; extends K196).
+k198:
+  version: "2026-07-28"
+  iv_concavity_arxiv_2607_24680:
+    flag: event_day_smile_concavity_first_class
+    watch_concave_w_inverse_u: true
+    no_assume_classical_u_smile_on_event_days: true
+    note: "Bloomberg option-pricing scheme (arXiv 2607.24680): local IV concavity (W/S/inverse-U) on ~250k SPX curves — event-day smiles first-class; Lane A do not assume classical U-smile on scheduled-event days"
+  lane_b_leaps_hedge_rolls:
+    check_tenor_stability_before_static_smile: true
+    note: "Lane B LEAPS/hedge rolls — check tenor stability claims from paper before trusting static smile models"
+  macro_korea_wti_fomc:
+    flag: asia_tech_crash_wti_dump_fomc_uncertainty
+    regime_watch_only: true
+    no_chase_korea_ai_narrative_alone: true
+    note: "Macro Charts 2026-07-28: Asia tech crash + WTI dump + FOMC uncertainty — regime watch only; no chase of Korea/AI narrative alone"
+  lane_a_overnight:
+    keep_tight_vs_k196: true
+    keep_exits_tight_into_fomc: true
+    note: "Keep Lane A overnight exits tight into FOMC vs K196 EXIT TO THE LEFT / prior caution stack"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief No code for trading path; weather notes only"

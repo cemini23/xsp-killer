@@ -402,3 +402,33 @@ k198:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief No code for trading path; weather notes only"
+
+# Glitch Falcon — agentic discipline framing (log-only ops culture; extends K198).
+glitch_falcon:
+  version: "2026-07-29"
+  agentic_discipline:
+    flag: checklist_complete_identical_sizing_no_fomo
+    trade_only_when_predeclared_conditions_fire: true
+    size_not_a_mood: true
+    note: "Glitch/Falcon steal: trade only when all pre-declared conditions fire; identical sizing; no FOMO — ops culture for Lane A/B"
+  falcon_marketing_stats:
+    do_not_promote_unverified: true
+    no_monitor_conviction_or_discord_copy: true
+    note: "Do not promote Falcon 92.3% win-rate / 3.14 PF marketing into monitors, conviction scores, or Discord without independent verification"
+  agentic_handoff:
+    automate_only_after_human_proven_repeatability: true
+    mirrors_wiki_ingest_human_gates: true
+    note: "Agentic handoff only after human-proven repeatability (mirrors wiki ingest human gates)"
+  contrast_vs_macro_charts:
+    psychology_process_not_level_watch: true
+    note: "Contrast vs Macro Charts / GuruWatcher: psychology/process, not a KOSPI/WTI/VIX level watch"
+  lane_a_overnight:
+    keep_tight_vs_k198: true
+    checklist_complete_only: true
+    size_not_a_mood: true
+    note: "Keep overnight tight vs K198 FOMC/IV caution; checklist-complete only; size is not a mood"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_falcon_stats_in_monitors: true
+    note: "Log-only ops culture; no Falcon stats promotion; no strategy gate flips"

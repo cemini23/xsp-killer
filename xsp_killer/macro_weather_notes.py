@@ -106,6 +106,11 @@ def load_k198_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k198")
 
 
+def load_glitch_falcon_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load Glitch Falcon agentic-discipline ops culture notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "glitch_falcon")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -163,9 +168,10 @@ def build_monitor_macro_weather_extras(
     k195_notes: dict[str, Any] | None = None,
     k196_notes: dict[str, Any] | None = None,
     k198_notes: dict[str, Any] | None = None,
+    glitch_falcon_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K198 YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K198 + glitch_falcon YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -187,6 +193,11 @@ def build_monitor_macro_weather_extras(
     k195 = k195_notes if k195_notes is not None else load_k195_notes(path)
     k196 = k196_notes if k196_notes is not None else load_k196_notes(path)
     k198 = k198_notes if k198_notes is not None else load_k198_notes(path)
+    glitch_falcon = (
+        glitch_falcon_notes
+        if glitch_falcon_notes is not None
+        else load_glitch_falcon_notes(path)
+    )
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -385,6 +396,19 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k198:
                 extras[key] = k198[key]
+
+    if glitch_falcon:
+        extras["glitch_falcon_version"] = glitch_falcon.get("version")
+        for key in (
+            "agentic_discipline",
+            "falcon_marketing_stats",
+            "agentic_handoff",
+            "contrast_vs_macro_charts",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in glitch_falcon:
+                extras[key] = glitch_falcon[key]
 
     return extras
 

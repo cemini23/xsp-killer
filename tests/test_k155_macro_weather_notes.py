@@ -28,6 +28,7 @@ from xsp_killer.macro_weather_notes import (
     load_k195_notes,
     load_k196_notes,
     load_k198_notes,
+    load_glitch_falcon_notes,
 )
 
 
@@ -671,9 +672,10 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert extras["cf_weekend_depth"][
         "view_changed_unwind_carry_weekend_depth"
     ] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -861,9 +863,10 @@ def test_build_monitor_macro_weather_extras_k178_from_prod_config():
     assert teaser["spx_drawdown_from_ath_pct"] == -2.18
     assert teaser["do_not_chase_on_free_teaser"] is True
     assert teaser["wait_paid_flow_picture"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["cme_single_stock_futures"]["context_only"] is True
     assert extras["cme_single_stock_futures"]["no_product_change"] is True
     assert extras["constraints"]["no_integral_solver"] is True
@@ -968,9 +971,10 @@ def test_build_monitor_macro_weather_extras_k182_from_prod_config():
     assert hf["do_not_add_size_on_bounce"] is True
     assert hf["wait_paid_flow_confirm"] is True
     assert hf["extends_k178_k177"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1068,9 +1072,10 @@ def test_build_monitor_macro_weather_extras_k191_from_prod_config():
     assert rh["distribution_context"] is True
     assert rh["no_new_rh_sleeve"] is True
     assert extras["caution_stack"]["continue_hf_fragile_damaged_goods"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1180,9 +1185,10 @@ def test_build_monitor_macro_weather_extras_k193_from_prod_config():
     assert teaser["confirm_livestream_or_report"] is True
     assert extras["clarity_act_wublock"]["awareness_only"] is True
     assert extras["clarity_act_wublock"]["no_action_unless_rh_chain_overlap"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1282,9 +1288,10 @@ def test_build_monitor_macro_weather_extras_k195_from_prod_config():
     assert teaser["flag"] == "macro_positioning_crude_risk_title_only"
     assert teaser["title_only_not_signal"] is True
     assert teaser["confirm_report_before_overnight_size"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1389,9 +1396,10 @@ def test_build_monitor_macro_weather_extras_k196_from_prod_config():
     assert hedge["no_mechanical_hedge_every_tick"] is True
     assert attention["watch_only"] is True
     assert attention["no_lane_change_without_calibration"] is True
-    # k198 overwrites lane_a_overnight with keep_tight_vs_k196
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    # glitch_falcon overwrites lane_a_overnight with keep_tight_vs_k198
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1490,8 +1498,121 @@ def test_build_monitor_macro_weather_extras_k198_from_prod_config():
     assert macro["flag"] == "asia_tech_crash_wti_dump_fomc_uncertainty"
     assert macro["regime_watch_only"] is True
     assert macro["no_chase_korea_ai_narrative_alone"] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k196"] is True
-    assert extras["lane_a_overnight"]["keep_exits_tight_into_fomc"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+
+def test_load_glitch_falcon_notes_prod_config():
+    notes = load_glitch_falcon_notes()
+    disc = notes["agentic_discipline"]
+    stats = notes["falcon_marketing_stats"]
+    assert notes.get("version") == "2026-07-29"
+    assert disc["flag"] == "checklist_complete_identical_sizing_no_fomo"
+    assert disc["trade_only_when_predeclared_conditions_fire"] is True
+    assert disc["size_not_a_mood"] is True
+    assert stats["do_not_promote_unverified"] is True
+    assert stats["no_monitor_conviction_or_discord_copy"] is True
+    assert notes["agentic_handoff"]["automate_only_after_human_proven_repeatability"] is True
+    assert notes["agentic_handoff"]["mirrors_wiki_ingest_human_gates"] is True
+    assert notes["contrast_vs_macro_charts"]["psychology_process_not_level_watch"] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert notes["lane_a_overnight"]["checklist_complete_only"] is True
+    assert notes["lane_a_overnight"]["size_not_a_mood"] is True
+    assert notes["constraints"]["no_falcon_stats_in_monitors"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_glitch_falcon(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "glitch_falcon": {
+                    "version": "2026-07-29",
+                    "agentic_discipline": {
+                        "flag": "checklist_complete_identical_sizing_no_fomo",
+                        "trade_only_when_predeclared_conditions_fire": True,
+                        "size_not_a_mood": True,
+                    },
+                    "falcon_marketing_stats": {
+                        "do_not_promote_unverified": True,
+                        "no_monitor_conviction_or_discord_copy": True,
+                    },
+                    "agentic_handoff": {
+                        "automate_only_after_human_proven_repeatability": True,
+                        "mirrors_wiki_ingest_human_gates": True,
+                    },
+                    "contrast_vs_macro_charts": {
+                        "psychology_process_not_level_watch": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k198": True,
+                        "checklist_complete_only": True,
+                        "size_not_a_mood": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                        "no_falcon_stats_in_monitors": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        glitch_falcon_notes=load_glitch_falcon_notes(cfg),
+        notes_path=cfg,
+    )
+    disc = extras["agentic_discipline"]
+    stats = extras["falcon_marketing_stats"]
+    assert extras is not None
+    assert extras["glitch_falcon_version"] == "2026-07-29"
+    assert disc["flag"] == "checklist_complete_identical_sizing_no_fomo"
+    assert disc["trade_only_when_predeclared_conditions_fire"] is True
+    assert disc["size_not_a_mood"] is True
+    assert stats["do_not_promote_unverified"] is True
+    assert stats["no_monitor_conviction_or_discord_copy"] is True
+    assert extras["agentic_handoff"]["automate_only_after_human_proven_repeatability"] is True
+    assert extras["contrast_vs_macro_charts"]["psychology_process_not_level_watch"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
+    assert extras["constraints"]["no_falcon_stats_in_monitors"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+
+
+def test_build_monitor_macro_weather_extras_glitch_falcon_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    disc = extras["agentic_discipline"]
+    stats = extras["falcon_marketing_stats"]
+    assert extras is not None
+    assert extras["glitch_falcon_version"] == "2026-07-29"
+    assert disc["flag"] == "checklist_complete_identical_sizing_no_fomo"
+    assert disc["trade_only_when_predeclared_conditions_fire"] is True
+    assert disc["size_not_a_mood"] is True
+    assert stats["do_not_promote_unverified"] is True
+    assert stats["no_monitor_conviction_or_discord_copy"] is True
+    assert extras["agentic_handoff"]["automate_only_after_human_proven_repeatability"] is True
+    assert extras["contrast_vs_macro_charts"]["psychology_process_not_level_watch"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k198"] is True
+    assert extras["lane_a_overnight"]["checklist_complete_only"] is True
+    assert extras["lane_a_overnight"]["size_not_a_mood"] is True
+    assert extras["constraints"]["no_falcon_stats_in_monitors"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1527,6 +1648,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k195_version"] == "2026-07-25"
     assert report.macro_weather_extras["k196_version"] == "2026-07-27"
     assert report.macro_weather_extras["k198_version"] == "2026-07-28"
+    assert report.macro_weather_extras["glitch_falcon_version"] == "2026-07-29"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -1570,5 +1692,9 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "iv_concavity_arxiv_2607_24680" in report.macro_weather_extras
     assert "lane_b_leaps_hedge_rolls" in report.macro_weather_extras
     assert "macro_korea_wti_fomc" in report.macro_weather_extras
+    assert "agentic_discipline" in report.macro_weather_extras
+    assert "falcon_marketing_stats" in report.macro_weather_extras
+    assert "agentic_handoff" in report.macro_weather_extras
+    assert "contrast_vs_macro_charts" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras

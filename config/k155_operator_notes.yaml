@@ -432,3 +432,24 @@ glitch_falcon:
     no_strategy_code: true
     no_falcon_stats_in_monitors: true
     note: "Log-only ops culture; no Falcon stats promotion; no strategy gate flips"
+
+# K213 — Capital Flows Warsh / equity risk (log-only; extends glitch_falcon).
+k213:
+  version: "2026-07-30"
+  cf_warsh_equity_risk:
+    flag: warsh_fed_path_vs_crash_narrative
+    tentative_macro_color_only: true
+    no_order_change_from_rss_teaser: true
+    note: "Capital Flows 2026-07-30 Warsh / Fed path vs crash risk — [TENTATIVE] macro color only; no order change from this RSS teaser alone"
+  guruwatcher:
+    do_not_arm_levels_from_this_piece: true
+    no_numeric_macro_charts_claim: true
+    note: "Do not arm GuruWatcher levels from this piece (no numeric Macro Charts claim)"
+  lane_a_overnight:
+    keep_tight_vs_glitch_falcon: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs Glitch Falcon discipline / prior stack; no posture change on Warsh teaser alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief read-only intel; weather notes only"

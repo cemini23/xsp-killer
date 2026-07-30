@@ -111,6 +111,11 @@ def load_glitch_falcon_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "glitch_falcon")
 
 
+def load_k213_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K213 Capital Flows Warsh / equity risk notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k213")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -169,9 +174,10 @@ def build_monitor_macro_weather_extras(
     k196_notes: dict[str, Any] | None = None,
     k198_notes: dict[str, Any] | None = None,
     glitch_falcon_notes: dict[str, Any] | None = None,
+    k213_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K198 + glitch_falcon YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K213 + glitch_falcon YAML notes with runtime extras for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -198,6 +204,7 @@ def build_monitor_macro_weather_extras(
         if glitch_falcon_notes is not None
         else load_glitch_falcon_notes(path)
     )
+    k213 = k213_notes if k213_notes is not None else load_k213_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -409,6 +416,17 @@ def build_monitor_macro_weather_extras(
         ):
             if key in glitch_falcon:
                 extras[key] = glitch_falcon[key]
+
+    if k213:
+        extras["k213_version"] = k213.get("version")
+        for key in (
+            "cf_warsh_equity_risk",
+            "guruwatcher",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k213:
+                extras[key] = k213[key]
 
     return extras
 

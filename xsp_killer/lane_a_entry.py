@@ -1476,7 +1476,11 @@ def close_open_paper_positions(
         if position_id and pid != position_id:
             continue
         avg = float(raw.get("average_price") or 0)
-        mark = float(raw.get("mark_price") or avg)
+        # Preserve mark_price=0.0 (expired / worthless); do not fall through via `or`.
+        mark_raw = raw.get("mark_price")
+        if mark_raw is None:
+            mark_raw = raw.get("mark")
+        mark = float(mark_raw) if mark_raw is not None else avg
         qty = float(raw.get("quantity") or 1)
         pnl_per_contract = (mark - avg) * 100.0 if avg > 0 else 0.0
         pnl_usd = pnl_per_contract * qty

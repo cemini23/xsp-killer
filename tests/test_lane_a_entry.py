@@ -12,6 +12,7 @@ from xsp_killer.lane_a_entry import (
     _finalize_entry,
     _write_entry_telemetry_brief,
     already_entered_today,
+    close_open_paper_positions,
     count_conductor_shadow_dip_bounce,
     entry_logs_for_epoch,
     et_session_date,
@@ -576,6 +577,56 @@ def test_reap_expired_paper_positions_closes_only_expired(tmp_path):
     assert state["paper_positions"]["expired"]["exit_reason"] == "expired"
     assert state["paper_positions"]["active"]["status"] == "open"
     assert state["paper_events"][-1]["position_id"] == "expired"
+
+
+def test_close_open_paper_positions_preserves_zero_mark(tmp_path):
+    """mark_price=0.0 must book full-debit PnL, not fall back to average_price."""
+    state = {
+        "paper_positions": {
+            "worthless": {
+                "position_id": "worthless",
+                "status": "open",
+                "average_price": 5.0,
+                "mark_price": 0.0,
+                "quantity": 1,
+                "logic_version": "xsp_lane_a_v2",
+                "entry_ts": "2026-07-01T19:45:00+00:00",
+            }
+        }
+    }
+    closed = close_open_paper_positions(
+        state,
+        state_path=tmp_path / "state.json",
+        reason="expired_worthless",
+        evaluated_at="2026-07-16T14:00:00+00:00",
+    )
+    assert len(closed) == 1
+    row = state["paper_positions"]["worthless"]
+    assert row["status"] == "closed"
+    assert row["exit_pnl_usd"] == -500.0
+    assert state["paper_events"][-1]["paper_pnl_usd"] == -500.0
+
+
+def test_close_open_paper_positions_falls_back_when_mark_missing(tmp_path):
+    state = {
+        "paper_positions": {
+            "nomark": {
+                "position_id": "nomark",
+                "status": "open",
+                "average_price": 4.0,
+                "quantity": 1,
+                "logic_version": "xsp_lane_a_v2",
+            }
+        }
+    }
+    closed = close_open_paper_positions(
+        state,
+        state_path=tmp_path / "state.json",
+        reason="manual",
+        evaluated_at="2026-07-16T14:00:00+00:00",
+    )
+    assert len(closed) == 1
+    assert state["paper_positions"]["nomark"]["exit_pnl_usd"] == 0.0
 
 
 def test_reap_expired_books_full_debit_loss(tmp_path):

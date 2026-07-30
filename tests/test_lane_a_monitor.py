@@ -561,6 +561,9 @@ def test_write_paper_pnl_brief_includes_dual_notional(tmp_path, monkeypatch):
     assert payload["premium_scale_used"] == 10.0
     assert payload["open_positions_mtm_usd"] == -89.95
     assert payload["open_positions_mtm_usd_1x"] == -9.0
+    assert payload["primary_pnl_field"] == "hypothetical_realized_pnl_usd_1x_approx"
+    assert payload["hypothetical_realized_pnl_usd_1x_approx"] == 0.0
+    assert "PRIMARY operator dollars" in payload["note"]
 
 
 def test_write_paper_pnl_brief_falls_back_to_rules_logic_version(tmp_path):

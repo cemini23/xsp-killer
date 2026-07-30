@@ -463,6 +463,8 @@ def test_build_scoreboard(tmp_path):
     assert len(payload["shadow_variants"]) == 1
     assert payload["last_entry_eval_at"] == "2026-06-22T19:45:00+00:00"
     assert "Do NOT sum PnL" in payload["comparison_guidance"]
+    assert "PRIMARY dollars" in payload["comparison_guidance"]
+    assert payload["primary_pnl_field"] == "realized_pnl_usd_1x_approx"
     assert payload["ranking_reliable"] is False
     assert payload["contract_clusters"]["XSP:call:2026-07-18:6010"]["variant_ids"] == [
         "v2_28dte_atm"

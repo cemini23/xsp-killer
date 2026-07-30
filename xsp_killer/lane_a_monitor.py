@@ -1447,11 +1447,14 @@ def write_paper_pnl_brief(
         "note": (
             "Production baseline lane only. Shadow variant comparison: "
             "briefs/xsp-lane-a-variants-scoreboard.json (per-variant, not summed). "
-            "open_positions_mtm_usd uses premium_scale; "
-            "open_positions_mtm_usd_1x is SPY-proxy 1×."
+            "PRIMARY operator dollars: hypothetical_realized_pnl_usd_1x_approx / "
+            "open_positions_mtm_usd_1x (SPY-proxy ~$1k). "
+            "open_positions_mtm_usd / hypothetical_realized_pnl_usd use premium_scale "
+            "(internal; typically 10×) — do not promote on scaled $."
         ),
         "pnl_epoch_at": epoch_at,
         "premium_scale_used": scale,
+        "primary_pnl_field": "hypothetical_realized_pnl_usd_1x_approx",
         "open_positions_mtm_usd": mtm_scaled,
         "open_positions_mtm_usd_1x": (
             round(mtm_scaled / scale, 2)
@@ -1460,6 +1463,9 @@ def write_paper_pnl_brief(
         ),
         "hypothetical_exits_n": len(events),
         "hypothetical_realized_pnl_usd": round(resolved_pnl, 2),
+        "hypothetical_realized_pnl_usd_1x_approx": (
+            round(resolved_pnl / scale, 2) if scale else round(resolved_pnl, 2)
+        ),
         "latest_evaluated_at": report.evaluated_at if report else None,
         "recent_exits": events[-10:],
     }

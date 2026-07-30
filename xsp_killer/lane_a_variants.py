@@ -1802,10 +1802,15 @@ def _build_scoreboard_locked(
         "last_entry_eval_at": last_entry_eval_at,
         "stale": stale,
         "comparison_guidance": (
-            "Rank shadow variants by avg_pnl_per_trade_usd vs v2_baseline_prod. "
-            "Do NOT sum PnL across variants — configs are independent experiments."
+            "PRIMARY dollars for promotion/economics: *_1x_approx "
+            "(≈ paper_$ / premium_scale; ~$1k-account). "
+            "Rank shadows by avg_pnl_per_trade_usd vs v2_baseline_prod "
+            "(order matches 1×; scaled $ is internal). "
+            "Do NOT sum PnL across variants — configs are independent experiments. "
+            "Do not promote on pre-epoch morning-cut time_stop soaks."
         ),
         "ranked_by": "avg_pnl_per_trade_usd",
+        "primary_pnl_field": "realized_pnl_usd_1x_approx",
         "ranking_reliable": ranking_reliable,
         "baseline_prod": baseline_row,
         "shadow_variants": shadow_rows,
@@ -1816,7 +1821,8 @@ def _build_scoreboard_locked(
         "dip_swing_cluster": _build_dip_swing_cluster(shadow_rows),
         "promotion_summary": _build_promotion_summary(rows),
         "note": (
-            "Per-variant comparison only. Need ≥20 post-epoch sessions per variant before promotion."
+            "Per-variant comparison only. Need ≥20 post-epoch sessions per variant "
+            "before promotion. Use *_1x_approx for absolute dollar claims."
         ),
     }
     out = out_path or DEFAULT_SCOREBOARD

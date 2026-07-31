@@ -453,3 +453,64 @@ k213:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief read-only intel; weather notes only"
+
+# K214 — WuBlock term premium / fiscal-dominance regime (log-only; extends K213).
+k214:
+  version: "2026-07-30"
+  wublock_term_premium:
+    flag: treasuries_rerated_above_effr_fiscal_dominance
+    whole_curve_above_effr: true
+    peak_surcharge_20y_bp: 152
+    positive_stock_bond_correlation_watch: true
+    no_auto_strategy_flip: true
+    note: "WuBlock (~27–28 Jul): curve above EFFR; 20Y surcharge +152bp; ACM/SF Fed CR term premium elevated; equity 25d skew lagging; bonds failed hedge on 28 Jul risk-off — regime color only, no automatic strategy flip"
+  watch_list:
+    acm_cr_term_premium: true
+    spy_25d_vs_skew: true
+    gold_25d_call_skew: true
+    auction_tails_20y: true
+    note: "Watch ACM/CR, SPY 25d vs SKEW, gold 25d call skew, 20Y auction tails"
+  korea_ai_hardware_liquidation:
+    discount_rate_transmission_case: true
+    not_direct_xsp_entry_signal: true
+    note: "Korea AI-hardware liquidation = discount-rate transmission case, not a direct XSP entry signal"
+  lane_a_overnight:
+    keep_tight_vs_k213: true
+    no_posture_change_on_essay: true
+    note: "Keep overnight tight vs K213 Warsh stack; no posture change on WuBlock essay alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief read-only intel; weather notes only"
+
+# K215 — Macro inflection + WuBlock weekly + Warsh video (log-only; extends K214).
+k215:
+  version: "2026-07-31"
+  macro_memory_unwind:
+    flag: memory_fund_wipeout_tactical_inflection
+    dxy_usdjpy_move: true
+    msft_amzn_strength_context: true
+    regime_color_only: true
+    no_auto_strategy_change: true
+    note: "Macro Charts: Memory-fund wipeout as tactical inflection; DXY/USDJPY move; MSFT/AMZN strength — regime color only"
+  risk_markers:
+    memory_unwind: true
+    usdjpy_162_narrative: true
+    note: "Log Memory unwind + USDJPY 162 narrative as risk markers"
+  wublock_weekly:
+    sec_clarity_contingency: true
+    eth_sol_etps: true
+    crypto_market_structure_legislative_path: true
+    note: "WuBlock weekly: SEC CLARITY contingency + ETH/SOL ETPs — note crypto market-structure legislative path"
+  cf_warsh_video:
+    companion_thin: true
+    extends_k213: true
+    note: "Capital Flows Warsh video companion (thin) — extends K213; no auto strategy change"
+  lane_a_overnight:
+    keep_tight_vs_k214: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K214 term-premium / prior stack; no posture change on this packet alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    note: "Honors brief read-only intel; weather notes only"

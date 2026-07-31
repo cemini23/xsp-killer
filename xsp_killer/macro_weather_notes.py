@@ -116,6 +116,16 @@ def load_k213_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k213")
 
 
+def load_k214_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K214 WuBlock term premium / fiscal-dominance notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k214")
+
+
+def load_k215_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K215 Macro inflection + WuBlock weekly + Warsh video notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k215")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -175,9 +185,11 @@ def build_monitor_macro_weather_extras(
     k198_notes: dict[str, Any] | None = None,
     glitch_falcon_notes: dict[str, Any] | None = None,
     k213_notes: dict[str, Any] | None = None,
+    k214_notes: dict[str, Any] | None = None,
+    k215_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K213 + glitch_falcon YAML notes with runtime extras for monitor attachment."""
+    """Merge K155..K215 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -205,6 +217,8 @@ def build_monitor_macro_weather_extras(
         else load_glitch_falcon_notes(path)
     )
     k213 = k213_notes if k213_notes is not None else load_k213_notes(path)
+    k214 = k214_notes if k214_notes is not None else load_k214_notes(path)
+    k215 = k215_notes if k215_notes is not None else load_k215_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -428,12 +442,40 @@ def build_monitor_macro_weather_extras(
             if key in k213:
                 extras[key] = k213[key]
 
+    if k214:
+        extras["k214_version"] = k214.get("version")
+        for key in (
+            "wublock_term_premium",
+            "watch_list",
+            "korea_ai_hardware_liquidation",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k214:
+                extras[key] = k214[key]
+
+    if k215:
+        extras["k215_version"] = k215.get("version")
+        for key in (
+            "macro_memory_unwind",
+            "risk_markers",
+            "wublock_weekly",
+            "cf_warsh_video",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k215:
+                extras[key] = k215[key]
+
     return extras
 
 
 def maybe_enrich_with_muse_spark(prompt: str) -> dict[str, Any] | None:
     """Optional log-only Muse Spark enrichment when K157 spike is enabled."""
-    from xsp_killer.muse_spark_spike import muse_spark_enabled, run_macro_research_enrichment
+    from xsp_killer.muse_spark_spike import (
+        muse_spark_enabled,
+        run_macro_research_enrichment,
+    )
 
     if not muse_spark_enabled():
         return None
@@ -449,7 +491,10 @@ def maybe_log_fable_spike(
     cross_vendor_review_done: bool = False,
 ) -> dict[str, Any] | None:
     """Optional log-only Fable Advisor spike when K159 is enabled."""
-    from xsp_killer.fable_advisor_spike import fable_advisor_enabled, run_brief_iteration_spike
+    from xsp_killer.fable_advisor_spike import (
+        fable_advisor_enabled,
+        run_brief_iteration_spike,
+    )
 
     if not fable_advisor_enabled():
         return None

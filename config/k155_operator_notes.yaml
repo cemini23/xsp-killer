@@ -514,3 +514,35 @@ k215:
     no_integral_solver: true
     no_strategy_code: true
     note: "Honors brief read-only intel; weather notes only"
+
+# K219 — IVS diffusion+SAAM ideas + Moontower inevitability + CF Warsh/Bessent (log-only; extends K215).
+k219:
+  version: "2026-08-03"
+  ivs_diffusion_saam_arxiv_2607_29220:
+    flag: surface_quality_no_arb_residual_ideas_only
+    steal_surface_quality_diagnostics: true
+    steal_no_arb_residual_framing: true
+    lane_b_leaps_vol_context: true
+    csi300_domain_off_topic: true
+    no_diffusion_training_or_serving: true
+    note: "arXiv 2607.29220: decoupled probabilistic IVS + SAAM no-arb refinement — steal surface-quality / no-arb residual framing for Lane B LEAPS/vol monitors only; CSI 300 domain off-topic; no diffusion train/serve in RH paths"
+  moontower_sound_of_inevitability:
+    flag: mm_discipline_risk_posture_not_signal
+    risk_posture_only: true
+    not_a_signal_generator: true
+    note: "Moontower sound of inevitability — MM discipline / inevitability as risk posture, not a signal generator"
+  cf_warsh_bessent_misdirection:
+    flag: ai_capex_macro_framing_regime_notes
+    ai_capex_macro_framing: true
+    regime_notes_beside_lane_ab: true
+    no_auto_trade: true
+    note: "Capital Flows Warsh/Bessent misdirection — AI-capex macro framing for regime notes beside Lane A/B; not auto-trade"
+  lane_a_overnight:
+    keep_tight_vs_k215: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K215 Memory/term-premium stack; no posture change on K219 teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    note: "Honors brief: ideas only; weather notes only; no diffusion vendor"

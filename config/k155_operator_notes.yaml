@@ -546,3 +546,71 @@ k219:
     no_strategy_code: true
     no_diffusion_vendor: true
     note: "Honors brief: ideas only; weather notes only; no diffusion vendor"
+
+# K221 — Macro Charts Aug 3 + CF misdirection livestream (log-only; extends K219).
+k221:
+  version: "2026-08-03"
+  macro_charts_aug3:
+    flag: momentum_crash_closed_regime_color
+    momentum_crash_closed: true
+    msft_amzn_july_strength: true
+    august_tactical_setup: true
+    vix_cot_1st_percentile: true
+    spx_net_long_extreme: true
+    regime_color_only: true
+    no_auto_strategy_change: true
+    note: "Macro Charts Aug 3 paid forward: momentum crash closed; MSFT/AMZN July strength; August tactical setup; VIX COT 1st %ile / SPX net-long extreme — regime color for Lane A overnight / Lane B LEAPS hedge only"
+  cf_misdirection_livestream:
+    flag: ai_capital_flows_awareness_only
+    warsh_bessent_ai_capex_misdirection: true
+    fx_positioning_teaser: true
+    vol_suppression_teaser: true
+    no_levels_from_teaser: true
+    awareness_only: true
+    no_auto_trade: true
+    note: "Capital Flows misdirection livestream (Warsh/Bessent AI-capex misdirection; FX positioning / vol-suppression teaser) = awareness only; no levels from teaser; no auto-trade"
+  lane_a_overnight:
+    keep_tight_vs_k219: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K219 ideas-only / prior caution stack; no posture change on K221 teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    note: "Honors brief: regime color only; weather notes only; no CF Workers vendor"
+
+# K222 — VIX-first + amortizing LSV calibration awareness (log-only; extends K221).
+k222:
+  version: "2026-08-04"
+  vdv_vix_first_arxiv_2608_01479:
+    flag: vix_first_joint_spx_vix_ideas_only
+    calibrate_vix_futures_options_first: true
+    derive_spx_sv_consistent_with_vix: true
+    lane_b_leaps_hedge_research: true
+    no_live_auto_calibrator: true
+    note: "arXiv 2608.01479 VDV: calibrate VIX futures/options first; derive SPX SV consistent with VIX — Lane B LEAPS/hedge research only; no live auto-calibrator"
+  amortizing_lsv_neural_op_arxiv_2608_01217:
+    flag: offline_amortize_online_eval_ideas_only
+    deeponet_fno_projection_consistent: true
+    synthetic_latency_98_5_to_0_6_ms_context: true
+    offline_amortize_online_evaluate: true
+    no_neural_operator_serving: true
+    note: "arXiv 2608.01217 amortizing LSV neural operator: DeepONet/FNO projection-consistent triple; 98.5→0.6 ms synthetic latency is context only; offline amortize, online evaluate; no neural-operator serving"
+  macro_aug4_mags_tech_bounce:
+    flag: mags_tech_bounce_regime_guruwatcher_primary
+    mags_tech_bounce_regime_only: true
+    guruwatcher_primary: true
+    note: "Macro Aug 4 SMH/tech chat is GuruWatcher-primary; xsp may note MAGS/Tech bounce regime only"
+  lane_a_overnight:
+    keep_tight_vs_k221: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K221 regime-color / prior stack; no posture change on K222 calibration-awareness teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    note: "Honors brief: awareness only; weather notes only; no live auto-calibrator / neural-op serving"

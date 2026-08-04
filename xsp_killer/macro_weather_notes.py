@@ -131,6 +131,16 @@ def load_k219_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k219")
 
 
+def load_k221_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K221 Macro Charts Aug 3 + CF misdirection livestream notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k221")
+
+
+def load_k222_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K222 VIX-first + amortizing LSV calibration awareness notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k222")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -193,9 +203,11 @@ def build_monitor_macro_weather_extras(
     k214_notes: dict[str, Any] | None = None,
     k215_notes: dict[str, Any] | None = None,
     k219_notes: dict[str, Any] | None = None,
+    k221_notes: dict[str, Any] | None = None,
+    k222_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K219 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K222 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -226,6 +238,8 @@ def build_monitor_macro_weather_extras(
     k214 = k214_notes if k214_notes is not None else load_k214_notes(path)
     k215 = k215_notes if k215_notes is not None else load_k215_notes(path)
     k219 = k219_notes if k219_notes is not None else load_k219_notes(path)
+    k221 = k221_notes if k221_notes is not None else load_k221_notes(path)
+    k222 = k222_notes if k222_notes is not None else load_k222_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -485,6 +499,29 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k219:
                 extras[key] = k219[key]
+
+    if k221:
+        extras["k221_version"] = k221.get("version")
+        for key in (
+            "macro_charts_aug3",
+            "cf_misdirection_livestream",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k221:
+                extras[key] = k221[key]
+
+    if k222:
+        extras["k222_version"] = k222.get("version")
+        for key in (
+            "vdv_vix_first_arxiv_2608_01479",
+            "amortizing_lsv_neural_op_arxiv_2608_01217",
+            "macro_aug4_mags_tech_bounce",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k222:
+                extras[key] = k222[key]
 
     return extras
 

@@ -614,3 +614,44 @@ k222:
     no_live_auto_calibrator: true
     no_neural_operator_serving: true
     note: "Honors brief: awareness only; weather notes only; no live auto-calibrator / neural-op serving"
+
+# K223 — NNLCI options pricing research + CF FX teaser + Macro SOX/yields (log-only; extends K222).
+k223:
+  version: "2026-08-05"
+  nnlci_arxiv_2608_02778:
+    flag: offline_multi_asset_heston_barrier_ideas_only
+    coarse_refined_mesh_nn_corrector: true
+    rmse_4_to_12x_claim_context: true
+    offline_research_only: true
+    no_live_pricer_wire: true
+    note: "arXiv 2608.02778 NNLCI: coarse+refined mesh NN corrector; 4–12× RMSE claim is context; offline multi-asset / Heston barrier pricing research only — not a live pricer wire"
+  cf_fx_yen_vix_rally_teaser:
+    flag: yen_carry_ai_liquidity_vix_up_on_rally
+    yen_intervention_teaser: true
+    carry_ai_liquidity: true
+    vix_up_on_equity_rally: true
+    awareness_only: true
+    no_levels_from_teaser: true
+    note: "Capital Flows livestream teaser: yen intervention + carry/AI liquidity + VIX up on equity rally — awareness only"
+  macro_aug5_spx_sox_igv:
+    flag: spx_ath_sox_igv_30yr_failed_breakout_regime
+    tech_materials_breadth: true
+    sox_igv_resistance_breaks_no_printed_levels: true
+    spx_ath_context: true
+    thirty_yr_failed_breakout: true
+    regime_color_only: true
+    no_auto_strategy_change: true
+    note: "Macro Aug 5: SPX ATH / SOX-IGV / 30YR failed breakout; Tech/Materials breadth; SOX/IGV resistance breaks — no printed levels; regime color only"
+  lane_a_overnight:
+    keep_tight_vs_k222: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K222 VIX/LSV stack; no posture change on K223 teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    note: "Honors brief: not a live pricer wire; weather notes only"

@@ -141,6 +141,11 @@ def load_k222_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k222")
 
 
+def load_k223_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K223 NNLCI + CF FX teaser + Macro SOX/yields notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k223")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -205,9 +210,10 @@ def build_monitor_macro_weather_extras(
     k219_notes: dict[str, Any] | None = None,
     k221_notes: dict[str, Any] | None = None,
     k222_notes: dict[str, Any] | None = None,
+    k223_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K222 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K223 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -240,6 +246,7 @@ def build_monitor_macro_weather_extras(
     k219 = k219_notes if k219_notes is not None else load_k219_notes(path)
     k221 = k221_notes if k221_notes is not None else load_k221_notes(path)
     k222 = k222_notes if k222_notes is not None else load_k222_notes(path)
+    k223 = k223_notes if k223_notes is not None else load_k223_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -522,6 +529,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k222:
                 extras[key] = k222[key]
+
+    if k223:
+        extras["k223_version"] = k223.get("version")
+        for key in (
+            "nnlci_arxiv_2608_02778",
+            "cf_fx_yen_vix_rally_teaser",
+            "macro_aug5_spx_sox_igv",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k223:
+                extras[key] = k223[key]
 
     return extras
 

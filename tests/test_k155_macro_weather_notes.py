@@ -35,6 +35,7 @@ from xsp_killer.macro_weather_notes import (
     load_k219_notes,
     load_k221_notes,
     load_k222_notes,
+    load_k223_notes,
 )
 
 
@@ -675,8 +676,8 @@ def test_build_monitor_macro_weather_extras_k174_from_prod_config():
     assert damaged["do_not_chase"] is True
     assert extras["cf_weekend_depth"]["flag"] == "jul16_19_regime_packet"
     assert extras["cf_weekend_depth"]["view_changed_unwind_carry_weekend_depth"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -865,8 +866,8 @@ def test_build_monitor_macro_weather_extras_k178_from_prod_config():
     assert teaser["spx_drawdown_from_ath_pct"] == -2.18
     assert teaser["do_not_chase_on_free_teaser"] is True
     assert teaser["wait_paid_flow_picture"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["cme_single_stock_futures"]["context_only"] is True
     assert extras["cme_single_stock_futures"]["no_product_change"] is True
@@ -972,8 +973,8 @@ def test_build_monitor_macro_weather_extras_k182_from_prod_config():
     assert hf["do_not_add_size_on_bounce"] is True
     assert hf["wait_paid_flow_confirm"] is True
     assert hf["extends_k178_k177"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1072,8 +1073,8 @@ def test_build_monitor_macro_weather_extras_k191_from_prod_config():
     assert rh["distribution_context"] is True
     assert rh["no_new_rh_sleeve"] is True
     assert extras["caution_stack"]["continue_hf_fragile_damaged_goods"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1184,8 +1185,8 @@ def test_build_monitor_macro_weather_extras_k193_from_prod_config():
     assert teaser["confirm_livestream_or_report"] is True
     assert extras["clarity_act_wublock"]["awareness_only"] is True
     assert extras["clarity_act_wublock"]["no_action_unless_rh_chain_overlap"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1286,8 +1287,8 @@ def test_build_monitor_macro_weather_extras_k195_from_prod_config():
     assert teaser["flag"] == "macro_positioning_crude_risk_title_only"
     assert teaser["title_only_not_signal"] is True
     assert teaser["confirm_report_before_overnight_size"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1393,8 +1394,8 @@ def test_build_monitor_macro_weather_extras_k196_from_prod_config():
     assert hedge["no_mechanical_hedge_every_tick"] is True
     assert attention["watch_only"] is True
     assert attention["no_lane_change_without_calibration"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1502,8 +1503,8 @@ def test_build_monitor_macro_weather_extras_k198_from_prod_config():
     assert macro["flag"] == "asia_tech_crash_wti_dump_fomc_uncertainty"
     assert macro["regime_watch_only"] is True
     assert macro["no_chase_korea_ai_narrative_alone"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1627,10 +1628,10 @@ def test_build_monitor_macro_weather_extras_glitch_falcon_from_prod_config():
     assert (
         extras["contrast_vs_macro_charts"]["psychology_process_not_level_watch"] is True
     )
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
-    # k222 overwrites constraints (keeps prior flags; drops no_falcon_stats)
+    # k223 overwrites constraints (keeps prior flags; drops no_falcon_stats)
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
 
@@ -1715,8 +1716,8 @@ def test_build_monitor_macro_weather_extras_k213_from_prod_config():
     assert warsh["no_order_change_from_rss_teaser"] is True
     assert extras["guruwatcher"]["do_not_arm_levels_from_this_piece"] is True
     assert extras["guruwatcher"]["no_numeric_macro_charts_claim"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1808,8 +1809,8 @@ def test_build_monitor_macro_weather_extras_k214_from_prod_config():
     assert (
         extras["korea_ai_hardware_liquidation"]["not_direct_xsp_entry_signal"] is True
     )
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -1896,8 +1897,8 @@ def test_build_monitor_macro_weather_extras_k215_from_prod_config():
     assert extras["risk_markers"]["memory_unwind"] is True
     assert extras["wublock_weekly"]["sec_clarity_contingency"] is True
     assert extras["cf_warsh_video"]["extends_k213"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -2000,7 +2001,7 @@ def test_build_monitor_macro_weather_extras_k219_from_prod_config():
     assert moon["not_a_signal_generator"] is True
     assert cf["flag"] == "ai_capex_macro_framing_regime_notes"
     assert cf["no_auto_trade"] is True
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -2121,8 +2122,8 @@ def test_build_monitor_macro_weather_extras_k221_from_prod_config():
     assert cf["no_levels_from_teaser"] is True
     assert cf["awareness_only"] is True
     assert cf["no_auto_trade"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_cf_workers_vendor"] is True
 
@@ -2247,8 +2248,8 @@ def test_build_monitor_macro_weather_extras_k222_from_prod_config():
     assert mags["flag"] == "mags_tech_bounce_regime_guruwatcher_primary"
     assert mags["mags_tech_bounce_regime_only"] is True
     assert mags["guruwatcher_primary"] is True
-    # k222 overwrites lane_a_overnight with keep_tight_vs_k221
-    assert extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
     assert extras["constraints"]["no_integral_solver"] is True
     assert extras["constraints"]["no_strategy_code"] is True
@@ -2256,6 +2257,147 @@ def test_build_monitor_macro_weather_extras_k222_from_prod_config():
     assert extras["constraints"]["no_cf_workers_vendor"] is True
     assert extras["constraints"]["no_live_auto_calibrator"] is True
     assert extras["constraints"]["no_neural_operator_serving"] is True
+
+
+def test_load_k223_notes_prod_config():
+    notes = load_k223_notes()
+    nnlci = notes["nnlci_arxiv_2608_02778"]
+    cf = notes["cf_fx_yen_vix_rally_teaser"]
+    macro = notes["macro_aug5_spx_sox_igv"]
+    assert notes.get("version") == "2026-08-05"
+    assert nnlci["flag"] == "offline_multi_asset_heston_barrier_ideas_only"
+    assert nnlci["coarse_refined_mesh_nn_corrector"] is True
+    assert nnlci["rmse_4_to_12x_claim_context"] is True
+    assert nnlci["offline_research_only"] is True
+    assert nnlci["no_live_pricer_wire"] is True
+    assert cf["flag"] == "yen_carry_ai_liquidity_vix_up_on_rally"
+    assert cf["yen_intervention_teaser"] is True
+    assert cf["carry_ai_liquidity"] is True
+    assert cf["vix_up_on_equity_rally"] is True
+    assert cf["awareness_only"] is True
+    assert cf["no_levels_from_teaser"] is True
+    assert macro["flag"] == "spx_ath_sox_igv_30yr_failed_breakout_regime"
+    assert macro["tech_materials_breadth"] is True
+    assert macro["sox_igv_resistance_breaks_no_printed_levels"] is True
+    assert macro["spx_ath_context"] is True
+    assert macro["thirty_yr_failed_breakout"] is True
+    assert macro["regime_color_only"] is True
+    assert macro["no_auto_strategy_change"] is True
+    assert notes["lane_a_overnight"]["keep_tight_vs_k222"] is True
+    assert notes["lane_a_overnight"]["no_posture_change_on_teaser"] is True
+    assert notes["constraints"]["no_integral_solver"] is True
+    assert notes["constraints"]["no_strategy_code"] is True
+    assert notes["constraints"]["no_live_pricer_wire"] is True
+
+
+def test_build_monitor_macro_weather_extras_includes_k223(tmp_path: Path):
+    cfg = tmp_path / "k155.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "k155": {
+                    "version": "2026-07-10",
+                    "event_cluster": "July FOMC / CPI cluster",
+                    "sofr_curve": {"note": "SOFR anchor"},
+                },
+                "k223": {
+                    "version": "2026-08-05",
+                    "nnlci_arxiv_2608_02778": {
+                        "flag": "offline_multi_asset_heston_barrier_ideas_only",
+                        "coarse_refined_mesh_nn_corrector": True,
+                        "rmse_4_to_12x_claim_context": True,
+                        "offline_research_only": True,
+                        "no_live_pricer_wire": True,
+                    },
+                    "cf_fx_yen_vix_rally_teaser": {
+                        "flag": "yen_carry_ai_liquidity_vix_up_on_rally",
+                        "yen_intervention_teaser": True,
+                        "carry_ai_liquidity": True,
+                        "vix_up_on_equity_rally": True,
+                        "awareness_only": True,
+                        "no_levels_from_teaser": True,
+                    },
+                    "macro_aug5_spx_sox_igv": {
+                        "flag": "spx_ath_sox_igv_30yr_failed_breakout_regime",
+                        "tech_materials_breadth": True,
+                        "sox_igv_resistance_breaks_no_printed_levels": True,
+                        "spx_ath_context": True,
+                        "thirty_yr_failed_breakout": True,
+                        "regime_color_only": True,
+                        "no_auto_strategy_change": True,
+                    },
+                    "lane_a_overnight": {
+                        "keep_tight_vs_k222": True,
+                        "no_posture_change_on_teaser": True,
+                    },
+                    "constraints": {
+                        "no_integral_solver": True,
+                        "no_strategy_code": True,
+                        "no_diffusion_vendor": True,
+                        "no_cf_workers_vendor": True,
+                        "no_live_auto_calibrator": True,
+                        "no_neural_operator_serving": True,
+                        "no_live_pricer_wire": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    notes = load_k155_notes(cfg)
+    extras = build_monitor_macro_weather_extras(
+        notes,
+        usdjpy=162.40,
+        k223_notes=load_k223_notes(cfg),
+        notes_path=cfg,
+    )
+    nnlci = extras["nnlci_arxiv_2608_02778"]
+    assert extras is not None
+    assert extras["k223_version"] == "2026-08-05"
+    assert nnlci["flag"] == "offline_multi_asset_heston_barrier_ideas_only"
+    assert nnlci["no_live_pricer_wire"] is True
+    assert extras["cf_fx_yen_vix_rally_teaser"]["awareness_only"] is True
+    assert extras["macro_aug5_spx_sox_igv"]["regime_color_only"] is True
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
+    assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
+    assert extras["constraints"]["no_live_pricer_wire"] is True
+
+
+def test_build_monitor_macro_weather_extras_k223_from_prod_config():
+    extras = build_monitor_macro_weather_extras(usdjpy=162.35)
+    nnlci = extras["nnlci_arxiv_2608_02778"]
+    cf = extras["cf_fx_yen_vix_rally_teaser"]
+    macro = extras["macro_aug5_spx_sox_igv"]
+    assert extras is not None
+    assert extras["k223_version"] == "2026-08-05"
+    assert nnlci["flag"] == "offline_multi_asset_heston_barrier_ideas_only"
+    assert nnlci["coarse_refined_mesh_nn_corrector"] is True
+    assert nnlci["rmse_4_to_12x_claim_context"] is True
+    assert nnlci["offline_research_only"] is True
+    assert nnlci["no_live_pricer_wire"] is True
+    assert cf["flag"] == "yen_carry_ai_liquidity_vix_up_on_rally"
+    assert cf["yen_intervention_teaser"] is True
+    assert cf["carry_ai_liquidity"] is True
+    assert cf["vix_up_on_equity_rally"] is True
+    assert cf["awareness_only"] is True
+    assert cf["no_levels_from_teaser"] is True
+    assert macro["flag"] == "spx_ath_sox_igv_30yr_failed_breakout_regime"
+    assert macro["tech_materials_breadth"] is True
+    assert macro["sox_igv_resistance_breaks_no_printed_levels"] is True
+    assert macro["spx_ath_context"] is True
+    assert macro["thirty_yr_failed_breakout"] is True
+    assert macro["regime_color_only"] is True
+    assert macro["no_auto_strategy_change"] is True
+    # k223 overwrites lane_a_overnight with keep_tight_vs_k222
+    assert extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
+    assert extras["lane_a_overnight"]["no_posture_change_on_teaser"] is True
+    assert extras["constraints"]["no_integral_solver"] is True
+    assert extras["constraints"]["no_strategy_code"] is True
+    assert extras["constraints"]["no_diffusion_vendor"] is True
+    assert extras["constraints"]["no_cf_workers_vendor"] is True
+    assert extras["constraints"]["no_live_auto_calibrator"] is True
+    assert extras["constraints"]["no_neural_operator_serving"] is True
+    assert extras["constraints"]["no_live_pricer_wire"] is True
 
 
 def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
@@ -2296,6 +2438,7 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert report.macro_weather_extras["k219_version"] == "2026-08-03"
     assert report.macro_weather_extras["k221_version"] == "2026-08-03"
     assert report.macro_weather_extras["k222_version"] == "2026-08-04"
+    assert report.macro_weather_extras["k223_version"] == "2026-08-05"
     assert "sofr_front_end" in report.macro_weather_extras
     assert "fomc_jul29" in report.macro_weather_extras
     assert "cev_aspiration" in report.macro_weather_extras
@@ -2360,9 +2503,12 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert "vdv_vix_first_arxiv_2608_01479" in report.macro_weather_extras
     assert "amortizing_lsv_neural_op_arxiv_2608_01217" in report.macro_weather_extras
     assert "macro_aug4_mags_tech_bounce" in report.macro_weather_extras
+    assert "nnlci_arxiv_2608_02778" in report.macro_weather_extras
+    assert "cf_fx_yen_vix_rally_teaser" in report.macro_weather_extras
+    assert "macro_aug5_spx_sox_igv" in report.macro_weather_extras
     assert "constraints" in report.macro_weather_extras
     assert "events" in report.macro_weather_extras
-    assert report.macro_weather_extras["lane_a_overnight"]["keep_tight_vs_k221"] is True
+    assert report.macro_weather_extras["lane_a_overnight"]["keep_tight_vs_k222"] is True
     assert (
         report.macro_weather_extras["lane_a_overnight"]["no_posture_change_on_teaser"]
         is True
@@ -2373,3 +2519,4 @@ def test_run_monitor_attaches_macro_weather_extras(tmp_path, monkeypatch):
     assert (
         report.macro_weather_extras["constraints"]["no_neural_operator_serving"] is True
     )
+    assert report.macro_weather_extras["constraints"]["no_live_pricer_wire"] is True

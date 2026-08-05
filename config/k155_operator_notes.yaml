@@ -655,3 +655,35 @@ k223:
     no_neural_operator_serving: true
     no_live_pricer_wire: true
     note: "Honors brief: not a live pricer wire; weather notes only"
+
+# K224 — Klement AI data-centre capex vs earnings boom (log-only; extends K223).
+k224:
+  version: "2026-08-05"
+  klement_ai_datacentre_capex:
+    flag: ai_capex_vs_earnings_boom_mean_reversion_risk
+    us_earnings_60pct_above_trend_ai_context: true
+    one_gw_build_vs_compute_revenue_poor: true
+    mean_reversion_multiple_compression_risk: true
+    not_a_timed_short: true
+    lane_ab_ai_semis_exposure: true
+    regime_awareness_only: true
+    note: "Klement/Reuters 2026-08-05: US earnings ~60% above trend on AI; 1GW data-centre build economics vs expected 1GW compute revenue look poor and could snap earnings toward trend — mean-reversion / multiple-compression risk for Lane A overnight + Lane B LEAPS AI/semis; not a timed short"
+  last_printed_smh_plan:
+    flag: aug4_macro_smh_plan_guruwatcher_primary
+    guruwatcher_primary: true
+    no_new_printed_smh_sox_nvda_levels: true
+    note: "Aug 4 Macro SMH plan remains last printed unless operator extracts new levels — no new SMH/SOX/NVDA prints from this teaser"
+  lane_a_overnight:
+    keep_tight_vs_k223: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K223 NNLCI/FX/Macro stack; no posture change on Klement teaser alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    note: "Honors brief: not a live pricer wire; no new solver/tabular LLM prediction (K241); weather notes only"

@@ -687,3 +687,41 @@ k224:
     no_live_pricer_wire: true
     no_tabular_llm_prediction: true
     note: "Honors brief: not a live pricer wire; no new solver/tabular LLM prediction (K241); weather notes only"
+
+# K225 — Wu July VC + Macro hard-assets regime (log-only; extends K224).
+k225:
+  version: "2026-08-06"
+  wublock_july_vc_cefi:
+    flag: cefi_tokenization_vc_regime_context
+    citadel_cryptocom_400m_20b_valuation_context: true
+    alpaca_tokenization_custody_claim_context: true
+    prime_intellect_context: true
+    watch_spill_into_vol_regime_narrative: true
+    no_auto_trade: true
+    note: "Wu July crypto VC: Citadel→Crypto.com $400m/$20b; Alpaca tokenization custody claim; Prime Intellect — CeFi + tokenized assets push; watch spill into vol/regime narrative, not auto-trade; basis/inventory awareness only"
+  macro_aug6_hard_assets:
+    flag: tactically_bullish_tech_strategically_bullish_hard_assets
+    tech_ai_tactical_bullish: true
+    hard_assets_gdx_gold_strategic: true
+    soft_regime_note_overnight_lanes: true
+    playbook_snapshot_gates_unchanged: true
+    note: "Macro Aug 6: tactically bullish Tech/AI + strategically bullish hard assets (GDX/Gold) — soft regime note for overnight XSP lanes; GREEN playbook_snapshot gates unchanged"
+  cf_global_economy_teaser:
+    flag: rss_teaser_only_no_invented_claims
+    rss_teaser_only: true
+    no_invented_claims: true
+    note: "Capital Flows 2026-08-06 global-economy post was RSS teaser only — do not invent claims"
+  lane_a_overnight:
+    keep_tight_vs_k224: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K224 Klement AI-capex stack; no posture change on Wu/Macro teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    note: "Honors brief: not a live calibrator; weather notes only; playbook_snapshot gates unchanged"

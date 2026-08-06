@@ -151,6 +151,11 @@ def load_k224_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k224")
 
 
+def load_k225_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K225 Wu July VC + Macro hard-assets regime notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k225")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -217,9 +222,10 @@ def build_monitor_macro_weather_extras(
     k222_notes: dict[str, Any] | None = None,
     k223_notes: dict[str, Any] | None = None,
     k224_notes: dict[str, Any] | None = None,
+    k225_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K224 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K225 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -254,6 +260,7 @@ def build_monitor_macro_weather_extras(
     k222 = k222_notes if k222_notes is not None else load_k222_notes(path)
     k223 = k223_notes if k223_notes is not None else load_k223_notes(path)
     k224 = k224_notes if k224_notes is not None else load_k224_notes(path)
+    k225 = k225_notes if k225_notes is not None else load_k225_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -559,6 +566,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k224:
                 extras[key] = k224[key]
+
+    if k225:
+        extras["k225_version"] = k225.get("version")
+        for key in (
+            "wublock_july_vc_cefi",
+            "macro_aug6_hard_assets",
+            "cf_global_economy_teaser",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k225:
+                extras[key] = k225[key]
 
     return extras
 

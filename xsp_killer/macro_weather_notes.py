@@ -156,6 +156,11 @@ def load_k225_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k225")
 
 
+def load_k226_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K226 CLARITY delay + Heston weak-form + manip velocity notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k226")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -223,9 +228,10 @@ def build_monitor_macro_weather_extras(
     k223_notes: dict[str, Any] | None = None,
     k224_notes: dict[str, Any] | None = None,
     k225_notes: dict[str, Any] | None = None,
+    k226_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K225 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K226 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -261,6 +267,7 @@ def build_monitor_macro_weather_extras(
     k223 = k223_notes if k223_notes is not None else load_k223_notes(path)
     k224 = k224_notes if k224_notes is not None else load_k224_notes(path)
     k225 = k225_notes if k225_notes is not None else load_k225_notes(path)
+    k226 = k226_notes if k226_notes is not None else load_k226_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -578,6 +585,20 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k225:
                 extras[key] = k225[key]
+
+    if k226:
+        extras["k226_version"] = k226.get("version")
+        for key in (
+            "wublock_clarity_act_delay",
+            "heston_weak_form_arxiv_2608_05009",
+            "options_manip_velocity_arxiv_2608_05373",
+            "cf_golden_era_teaser",
+            "amd_taalas_asic_thesis",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k226:
+                extras[key] = k226[key]
 
     return extras
 

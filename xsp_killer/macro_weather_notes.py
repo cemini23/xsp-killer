@@ -161,6 +161,16 @@ def load_k226_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k226")
 
 
+def load_k228_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K228 WuBlock HL + Uniswap Pools + ether.fi notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k228")
+
+
+def load_k229_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K229 Wu Asia TOP10 Russia/Japan regulatory notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k229")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -229,9 +239,11 @@ def build_monitor_macro_weather_extras(
     k224_notes: dict[str, Any] | None = None,
     k225_notes: dict[str, Any] | None = None,
     k226_notes: dict[str, Any] | None = None,
+    k228_notes: dict[str, Any] | None = None,
+    k229_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K226 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K229 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -268,6 +280,8 @@ def build_monitor_macro_weather_extras(
     k224 = k224_notes if k224_notes is not None else load_k224_notes(path)
     k225 = k225_notes if k225_notes is not None else load_k225_notes(path)
     k226 = k226_notes if k226_notes is not None else load_k226_notes(path)
+    k228 = k228_notes if k228_notes is not None else load_k228_notes(path)
+    k229 = k229_notes if k229_notes is not None else load_k229_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -599,6 +613,29 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k226:
                 extras[key] = k226[key]
+
+    if k228:
+        extras["k228_version"] = k228.get("version")
+        for key in (
+            "wublock_hl_july_volume",
+            "uniswap_pools_robinhood_chain",
+            "etherfi_eigenlayer_exit",
+            "cf_eow_20260808_teaser",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k228:
+                extras[key] = k228[key]
+
+    if k229:
+        extras["k229_version"] = k229.get("version")
+        for key in (
+            "wublock_asia_top10_russia_japan",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k229:
+                extras[key] = k229[key]
 
     return extras
 

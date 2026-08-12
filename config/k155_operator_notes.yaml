@@ -849,3 +849,169 @@ k229:
     no_prod_manip_detector: true
     no_auto_lane_size_change: true
     note: "Honors brief: not a live calibrator; no auto XSP lane size/overnight rule change from Asia digest; weather notes only"
+
+# K231 — Donny META/REA + Fed-Warsh week regime (log-only; extends K229).
+k231:
+  version: "2026-08-11"
+  needs_verification: true
+  fed_warsh_week:
+    flag: fed_decision_week_hyperscaler_capex_regime
+    wed_afternoon_et_decision_presser: true
+    hike_odds_approx_33pct_context: true
+    no_dot_plot_warsh_speech_weighted: true
+    core_pce_thursday_context: true
+    mag7_hyperscaler_earnings_context: true
+    alphabet_capex_raise_fcf_negative_context: true
+    hyperscaler_capex_swing_for_index_vol: true
+    needs_verification: true
+    note: "Fed/Warsh week Wed afternoon ET: ~33% hike odds + presser; no dot plot → Warsh speech weighted; Core PCE Thu + MAG7/hyperscaler earnings; Alphabet -12% after +15% capex to ~$205B / first neg FCF since 2004 — hyperscaler capex is swing factor for index vol [NEEDS VERIFICATION 2026-08-11]"
+  hot_money_rotation:
+    flag: ai_semis_flush_to_industrials_regime
+    ai_semis_hot_money_flushed: true
+    industrials_downstream_context: true
+    possible_tech_bottom_forming_context: true
+    spacex_unlock_aug10_flow_context: true
+    needs_verification: true
+    note: "Hot money flushed AI/Semis → Industrials (CAT/GE Vernova/RTX/Eaton/Boeing); possible tech bottom (CRM/INTU/SHOP/LIF); no real flows until next SpaceX unlock Aug 10 [NEEDS VERIFICATION]"
+  meta_spot_watch_only:
+    flag: meta_earnings_hyperscaler_capex_tell
+    long_into_wed_after_close_earnings_context: true
+    avg_640_initial_range_625_675_context: true
+    tp_760_800_context: true
+    signal_zuck_ratchets_back_capex_or_rents_capacity: true
+    cut_rule_30min_post_open_if_doubles_down_craters: true
+    no_options_lotto: true
+    spot_watch_only: true
+    hyperscaler_capex_tell_for_index: true
+    needs_verification: true
+    note: "META spot watch only into Wed-after-close earnings (avg $640 / $625–675; TP $760–800); signal = Zuck ratchets back capex/AI or rents excess capacity; if doubles down and craters cut ~30min post-open; no options lotto — hyperscaler-capex tell for index [NEEDS VERIFICATION]"
+  rea_rare_earth_sentiment_only:
+    flag: western_re_rerate_watch_not_xsp_tradable
+    second_largest_donny_position_context: true
+    derated_45pct_since_may_listing_context: true
+    humanoid_rare_earth_thesis_context: true
+    mt_weld_dytb_supply_context: true
+    homer_auger_carbonatite_anomaly_context: true
+    assays_q3_late_aug_early_sep_context: true
+    us_china_re_export_control_expires_nov10: true
+    low_extension_probability_western_rerate_watch: true
+    not_xsp_tradable: true
+    sentiment_regime_only: true
+    needs_verification: true
+    note: "REA spot rare-earth sentiment only (not XSP tradable): ~45% de-rate since May; humanoid RE thesis; Homer auger carbonatite anomaly + 15km RC/DD; assays Q3; US-China RE export control expires Nov 10 low extension odds → Western RE re-rate watch [NEEDS VERIFICATION]"
+  lane_a_overnight:
+    keep_tight_vs_k229: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K229 Asia TOP10 stack; no posture change on Donny Fed/META/REA digest alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    no_prod_manip_detector: true
+    no_auto_lane_size_change: true
+    no_auto_watches_json_writes: true
+    no_options_lotto: true
+    playbook_snapshot_gates_unchanged: true
+    needs_verification: true
+    note: "Honors brief: regime context only; GREEN playbook_snapshot gates unchanged; no live calibrator; no auto watches.json writes; META no options lotto; REA not XSP tradable; author numbers NEED VERIFICATION"
+
+# K232 — WuBlock July 2026 spot volume regime (log-only; extends K231).
+k232:
+  version: "2026-08-11"
+  needs_verification: true
+  wublock_july_spot_volume:
+    flag: crypto_spot_volume_contraction_regime_snapshot
+    july_2026_spot_volume_429b: true
+    mom_decline_21_7pct_context: true
+    all_14_exchanges_down: true
+    binance_share_45_8pct_context: true
+    top3_share_approx_64pct_context: true
+    wash_trading_bot_caveat: true
+    single_regime_exploratory_only: true
+    no_cross_regime_strategy_implication: true
+    needs_verification: true
+    note: "WuBlock July 2026 spot volume $429.0B (−21.7% MoM from $547.9B); all 14 tracked exchanges down; Binance 45.8% / top-3 ~64%; wash-trading caveat — single-regime exploratory snapshot only [NEEDS VERIFICATION 2026-08-11]"
+  relative_strength_weakness:
+    flag: defi_milder_cex_sharper_mom_declines
+    mildest_uniswap_kraken_gate_context: true
+    sharpest_bitfinex_coinbase_bybit_context: true
+    defi_milder_than_cex_aggregate_this_snapshot: true
+    single_regime_exploratory_only: true
+    needs_verification: true
+    note: "Relative MoM: mildest Uniswap −9.8% / Kraken −13.4% / Gate −15.9%; sharpest Bitfinex −59.7% / Coinbase −26.4% / Bybit −24.5%; DeFi milder than CEX aggregate in this snapshot only [NEEDS VERIFICATION]"
+  lane_a_overnight:
+    keep_tight_vs_k231: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K231 Fed/META/REA stack; no posture change on July spot-volume snapshot alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    no_prod_manip_detector: true
+    no_auto_lane_size_change: true
+    no_auto_watches_json_writes: true
+    no_order_bots: true
+    playbook_snapshot_gates_unchanged: true
+    needs_verification: true
+    note: "Honors brief: regime context only; continued spot contraction = reduced crypto beta spillover awareness; no direct XSP lane change; no live calibrator; no watches.json writes; no order bots; Wu figures NEED VERIFICATION"
+
+# K233 — Fed Speaks FOMC IV surface + WuBlock July derivatives volume (log-only; extends K232).
+k233:
+  version: "2026-08-12"
+  fed_speaks_fomc_iv_surface_arxiv_2608_10693:
+    flag: prefomc_short_dated_otm_iv_timing_awareness
+    iv_builds_before_scheduled_fomc: true
+    concentrated_short_dated_otm: true
+    amplified_in_high_vol_regimes: true
+    convlstm_surface_forecast_noise_bounded: true
+    fomc_calendar_as_timing_input_awareness: true
+    high_vol_plus_fomc_favors_earlier_entry_awareness: true
+    calm_regime_normal_entry_rules: true
+    no_lane_retune_on_paper_forecasts: true
+    timing_regime_input_only: true
+    no_strategy_code: true
+    note: "arXiv 2608.10693 Fed Speaks: IV builds before scheduled FOMC, concentrated in short-dated OTM and amplified in high-vol regimes; ConvLSTM edge over RW noise-bounded — FOMC calendar as Lane A timing awareness only; do not re-tune Lane on paper forecasts; calm regime → normal entry rules"
+  wublock_july_derivatives_volume:
+    flag: crypto_derivatives_volume_venue_vol_context
+    july_2026_derivatives_3_03t_context: true
+    mom_decline_11_1pct_context: true
+    futures_spot_ratio_7_06x_up_13_6pct: true
+    hyperliquid_mom_decline_18_5pct_context: true
+    deribit_mom_decline_44_4pct_options_contraction: true
+    bitget_gate_upstart_perp_venue_rotation_watch: true
+    rising_leverage_intensity_shrinking_volume: true
+    venue_vol_context_only: true
+    no_auto_hl_perp_size_change: true
+    no_strategy_code: true
+    note: "WuBlock July 2026 derivatives $3.03T (−11.1% MoM); futures/spot 7.06x (+13.6%); Hyperliquid −18.5% MoM (HL adapter venue context); Deribit −44.4% options contraction; Bitget/Gate upstart perp rotation watch — rising leverage intensity with shrinking volume; venue/vol context only; no auto HL perp size change"
+  lane_a_overnight:
+    keep_tight_vs_k232: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K232 July spot-volume stack; no posture change on K233 Fed Speaks / Wu derivatives teasers alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    no_prod_manip_detector: true
+    no_auto_lane_size_change: true
+    no_auto_watches_json_writes: true
+    no_order_bots: true
+    no_lane_retune_on_paper_forecasts: true
+    no_auto_hl_perp_size_change: true
+    playbook_snapshot_gates_unchanged: true
+    note: "Honors both K233 briefs: timing/regime + venue/vol context only; no strategy code; do not re-tune Lane on ConvLSTM forecasts; no auto HL perp size change; GREEN playbook_snapshot gates unchanged"

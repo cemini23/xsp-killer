@@ -186,6 +186,11 @@ def load_k233_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k233")
 
 
+def load_k234_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K234 Moontower high-IV collar shopping hedge vocabulary notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k234")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -259,9 +264,10 @@ def build_monitor_macro_weather_extras(
     k231_notes: dict[str, Any] | None = None,
     k232_notes: dict[str, Any] | None = None,
     k233_notes: dict[str, Any] | None = None,
+    k234_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K233 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K234 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -303,6 +309,7 @@ def build_monitor_macro_weather_extras(
     k231 = k231_notes if k231_notes is not None else load_k231_notes(path)
     k232 = k232_notes if k232_notes is not None else load_k232_notes(path)
     k233 = k233_notes if k233_notes is not None else load_k233_notes(path)
+    k234 = k234_notes if k234_notes is not None else load_k234_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -694,6 +701,16 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k233:
                 extras[key] = k233[key]
+
+    if k234:
+        extras["k234_version"] = k234.get("version")
+        for key in (
+            "moontower_high_iv_collar_shopping",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k234:
+                extras[key] = k234[key]
 
     return extras
 

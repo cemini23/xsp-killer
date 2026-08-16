@@ -14,6 +14,8 @@ briefs/*-latest.json
 briefs/lane-a-state.json
 briefs/lane-pc-state.json
 briefs/lane-pc-scoreboard.json
+briefs/lane-pc-7dte-state.json
+briefs/lane-pc-7dte-scoreboard.json
 reports/gap-audit/
 !.gitkeep
 *.egg-info/

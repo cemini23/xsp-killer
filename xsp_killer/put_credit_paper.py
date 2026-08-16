@@ -54,6 +54,7 @@ class PcRules:
     require_above_ma20: bool = True
     require_window: bool = True
     ma_period: int = 20
+    entry_weekdays: tuple[int, ...] = (0, 1, 2, 3)
 
     @classmethod
     def from_yaml(cls, path: Path | None = None) -> PcRules:
@@ -67,6 +68,9 @@ class PcRules:
             h, m = str(raw).split(":")[:2]
             return time(int(h), int(m))
 
+        raw_days = entry.get("weekdays", [0, 1, 2, 3])
+        days = tuple(int(x) for x in raw_days)
+
         return cls(
             window_start=_t(entry.get("window_start_et"), time(15, 45)),
             window_end=_t(entry.get("window_end_et"), time(16, 0)),
@@ -79,6 +83,7 @@ class PcRules:
             require_above_ma20=bool(entry.get("require_above_ma20", True)),
             require_window=bool(entry.get("require_window", True)),
             ma_period=int(entry.get("ma_period", 20)),
+            entry_weekdays=days,
         )
 
 
@@ -103,6 +108,8 @@ def evaluate_pc_gates(
         return GateResult(False, "weekend")
     if now.weekday() == 4:
         return GateResult(False, "friday_no_entry")
+    if now.weekday() not in rules.entry_weekdays:
+        return GateResult(False, "weekday_blocked")
     if rules.require_window:
         t = now.time()
         if not (rules.window_start <= t < rules.window_end):

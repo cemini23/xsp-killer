@@ -51,6 +51,12 @@ def test_gates_skip_friday_and_fomc_and_below_ma():
     )
     assert g.allowed is True
 
+    mon_tue = PcRules(entry_weekdays=(0, 1))
+    wed = datetime(2026, 1, 21, 15, 50, tzinfo=ET)
+    g = evaluate_pc_gates(now_et=wed, close=600.0, ma20=590.0, rules=mon_tue)
+    assert g.allowed is False
+    assert g.reason == "weekday_blocked"
+
 
 def test_exits_velocity_dma_friday():
     rules = PcRules(velocity_pct=0.76, max_hold_sessions=5)

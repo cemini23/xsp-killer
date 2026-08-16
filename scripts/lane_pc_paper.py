@@ -63,6 +63,7 @@ def _cmd_entry(args: argparse.Namespace) -> int:
     return 0 if gate.allowed or gate.reason in (
         "weekend",
         "friday_no_entry",
+        "weekday_blocked",
         "out_of_window",
         "fomc_window",
         "below_ma20",
@@ -112,8 +113,12 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     if args.since:
         since = datetime.fromisoformat(args.since).date()
         df = df[df["date"] >= since].reset_index(drop=True)
-    rules = PcRules.from_yaml()
+    rules = PcRules.from_yaml(Path(args.rules) if args.rules else None)
     rules.require_window = False
+    if args.dte is not None:
+        rules.dte = int(args.dte)
+    if args.weekdays:
+        rules.entry_weekdays = tuple(int(x) for x in args.weekdays.split(","))
     result = replay_pc_daily(df, rules)
     result["generated_at"] = datetime.now(timezone.utc).isoformat()
     result["source_bars"] = str(args.bars)
@@ -167,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--since", default=None)
     r.add_argument("--out", default=None)
     r.add_argument("--state", default=None)
+    r.add_argument("--dte", type=int, default=None)
+    r.add_argument("--weekdays", default=None, help="comma weekdays 0=Mon")
+    r.add_argument("--rules", default=None)
     r.set_defaults(func=_cmd_replay)
 
     s = sub.add_parser("scoreboard")

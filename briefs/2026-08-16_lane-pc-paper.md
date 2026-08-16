@@ -32,19 +32,18 @@ Blocked: 529 below MA, 505 Friday, 316 FOMC. That is the filter working.
 
 Overlapping daily entries in the research hunt (n=1,148) were research-only. Paper is the honest one-position book.
 
-## New edge outside Lane A (contender hunt)
+## New edge outside Lane A
 
-Pre-registered, same elite bar. Call-credit-below-MA **failed** (win 53.6%).
+**7 DTE Mon/Tue** is the upgrade. Friday flatten starves Wed/Thu 7 DTE of theta.
 
-| Book | Test ROC | 2025 | Win | Note |
-|---|---:|---:|---:|---|
-| **7 DTE put credit, above MA, FOMC skip** | **+12.5%** | +9.5% | 72.3% | Beats 14 DTE test +9.6%. 2022 only +0.6% |
-| Turn-of-month 14 DTE put credit | +12.0% | +13.2% | 75.2% | n=246. Same structure, calendar subset |
-| Iron condor above MA | +4.4% | +4.3% | **90.7%** | Every year +3.4–4.8%. Stability, not max $ |
-| 16-delta put credit | +7.8% | +5.9% | 79.2% | Higher win, lower ROC than ATM |
-| Call credit below MA | +4.6% | +2.0% | 53.6% | **Not elite** |
+Honest one-position paper:
 
-The 7 DTE book is the next paper candidate. Not wired yet — 14 DTE is what is soaking.
+| Book | n | Win | Mean $ | ROC risk |
+|---|---:|---:|---:|---:|
+| 14 DTE Mon–Thu (this sleeve) | 378 | 67.7% | +$37.94 | +12.3% |
+| 7 DTE Mon–Tue (replay only) | 325 | 67.7% | +$47.61 | +15.3% |
+
+See `briefs/2026-08-16_deep-xsp-edge.md`. Dead: put debit below MA, pullback-only, 7/21 calendar.
 
 ## Honesty
 

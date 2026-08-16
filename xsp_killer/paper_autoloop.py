@@ -17,8 +17,11 @@ from zoneinfo import ZoneInfo
 
 from xsp_killer.put_credit import (
     build_put_credit,
+    put_credit_value,
     select_long_put_strike,
 )
+from xsp_killer.tipseeker_shadow import load_latest_tipseeker
+from xsp_killer.uw_put_marks import PutCreditMarks, fetch_live_put_credit_marks
 from xsp_killer.put_credit_paper import (
     DEFAULT_LOG,
     DEFAULT_RULES,
@@ -50,6 +53,35 @@ class SpySnapshot:
     rv20: float
     asof: str
     mark_value: float | None = None
+
+
+def load_paper_overlays() -> dict[str, Any]:
+    """TipSeeker DB + UW IV/tide. Log-only. Never vetoes. Fail-open."""
+    out: dict[str, Any] = {
+        "shadow_only": True,
+        "veto": False,
+        "tipseeker": None,
+        "iv_rank": None,
+        "market_tide": None,
+    }
+    try:
+        out["tipseeker"] = load_latest_tipseeker()
+    except Exception:
+        out["tipseeker"] = None
+    try:
+        from xsp_killer.uw_shadow import (
+            _get_provider,
+            build_iv_rank_summary,
+            fetch_market_tide_summary,
+        )
+
+        provider = _get_provider()
+        if provider is not None:
+            out["iv_rank"] = build_iv_rank_summary(provider, ticker="SPY")
+            out["market_tide"] = fetch_market_tide_summary(provider)
+    except Exception:
+        pass
+    return out
 
 
 def force_paper_only_env() -> None:
@@ -97,16 +129,36 @@ def _open_pc_position(
     rules: PcRules,
     snapshot: SpySnapshot,
     now_et: datetime,
+    live_marks: bool = False,
+    mark_fn: Callable[..., PutCreditMarks | None] | None = None,
 ) -> dict[str, Any]:
     width = float(rules.width_strikes) * STRIKE_STEP
     iv = min(max(float(snapshot.rv20), 0.08), 0.80)
     short_k = _atm(snapshot.close)
     long_k = select_long_put_strike(short_k, width_strikes=rules.width_strikes)
+    fidelity = "modeled_bs_rv20"
+    short_p = _bs_put(snapshot.close, short_k, rules.dte, iv)
+    long_p = _bs_put(snapshot.close, long_k, rules.dte, iv)
+    if live_marks:
+        fn = mark_fn or fetch_live_put_credit_marks
+        try:
+            marks = fn(
+                short_k=short_k,
+                long_k=long_k,
+                dte=rules.dte,
+                today=_today(now_et),
+            )
+        except Exception:
+            marks = None
+        if marks is not None and marks.net_credit > 0:
+            short_p = marks.short_mid
+            long_p = marks.long_mid
+            fidelity = marks.source
     built = build_put_credit(
         short_strike=short_k,
-        short_premium=_bs_put(snapshot.close, short_k, rules.dte, iv),
+        short_premium=short_p,
         long_strike=long_k,
-        long_premium=_bs_put(snapshot.close, long_k, rules.dte, iv),
+        long_premium=long_p,
         premium_scale=1.0,
     )
     if built is None:
@@ -125,7 +177,7 @@ def _open_pc_position(
         "sessions_held": 0,
         "last_monitor_date": day,
         "dte": rules.dte,
-        "pricing_fidelity": "modeled_bs_rv20",
+        "pricing_fidelity": fidelity,
         "live_untouched": True,
     }
 
@@ -137,6 +189,9 @@ def run_pc_cycle(
     snapshot: SpySnapshot,
     now_et: datetime,
     log_path: Path | None = None,
+    live_marks: bool = False,
+    mark_fn: Callable[..., PutCreditMarks | None] | None = None,
+    overlays: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     log = log_path or DEFAULT_LOG
     open_pos = state.setdefault("paper_positions", {})
@@ -154,21 +209,47 @@ def run_pc_cycle(
         else:
             width = float(pos.get("width_points") or rules.width_strikes * STRIKE_STEP)
             dte_left = max(0, int(pos.get("dte") or rules.dte) - held)
-            pos["mark_value"] = _spread_mark(
-                snapshot.close,
-                float(pos["short_strike"]),
-                float(pos["long_strike"]),
-                dte_left,
-                float(pos.get("iv") or snapshot.rv20),
-                width,
-            )
+            used_live = False
+            if live_marks:
+                fn = mark_fn or fetch_live_put_credit_marks
+                try:
+                    marks = fn(
+                        short_k=float(pos["short_strike"]),
+                        long_k=float(pos["long_strike"]),
+                        dte=dte_left,
+                        today=today,
+                    )
+                except Exception:
+                    marks = None
+                if marks is not None:
+                    pos["mark_value"] = put_credit_value(
+                        short_mark=marks.short_mid,
+                        long_mark=marks.long_mid,
+                        width=width,
+                    )
+                    pos["pricing_fidelity"] = marks.source
+                    used_live = True
+            if not used_live:
+                pos["mark_value"] = _spread_mark(
+                    snapshot.close,
+                    float(pos["short_strike"]),
+                    float(pos["long_strike"]),
+                    dte_left,
+                    float(pos.get("iv") or snapshot.rv20),
+                    width,
+                )
         reason = evaluate_pc_exits(pos, now_et=now_et, sessions_held=held, rules=rules)
         if reason:
             pos["status"] = "closed"
             pos["exit_reason"] = reason
             pos["exit_ts"] = datetime.now(timezone.utc).isoformat()
             closed.append(pos)
-            exited = {"event": "pc_exit", "reason": reason, "position": pos}
+            exited = {
+                "event": "pc_exit",
+                "reason": reason,
+                "position": pos,
+                "overlays_veto": False,
+            }
             append_log(exited, log)
         else:
             still[pid] = pos
@@ -177,7 +258,13 @@ def run_pc_cycle(
         return exited
 
     if still:
-        row = {"event": "pc_hold", "open": len(still), "allowed": False, "reason": "already_open"}
+        row = {
+            "event": "pc_hold",
+            "open": len(still),
+            "allowed": False,
+            "reason": "already_open",
+            "overlays_veto": False,
+        }
         append_log(row, log)
         return row
 
@@ -191,11 +278,18 @@ def run_pc_cycle(
             "reason": gate.reason,
             "close": snapshot.close,
             "ma20": snapshot.ma20,
+            "overlays_veto": False,
         }
         append_log(row, log)
         return row
 
-    pos = _open_pc_position(rules=rules, snapshot=snapshot, now_et=now_et)
+    pos = _open_pc_position(
+        rules=rules,
+        snapshot=snapshot,
+        now_et=now_et,
+        live_marks=live_marks,
+        mark_fn=mark_fn,
+    )
     state["paper_positions"][pos["position_id"]] = pos
     row = {
         "event": "pc_entry",
@@ -205,6 +299,8 @@ def run_pc_cycle(
         "close": snapshot.close,
         "ma20": snapshot.ma20,
         "live_untouched": True,
+        "overlays_veto": False,
+        "overlays": overlays,
     }
     append_log(row, log)
     return row
@@ -226,12 +322,19 @@ def run_pc_sleeve(
     rules_path: Path,
     snapshot: SpySnapshot,
     now_et: datetime,
+    overlays: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rules = PcRules.from_yaml(rules_path)
     log, state_path, score_path = _pc_paths_from_yaml(rules_path)
     state = load_state(state_path)
     out = run_pc_cycle(
-        rules=rules, state=state, snapshot=snapshot, now_et=now_et, log_path=log
+        rules=rules,
+        state=state,
+        snapshot=snapshot,
+        now_et=now_et,
+        log_path=log,
+        live_marks=True,
+        overlays=overlays,
     )
     save_state(state, state_path)
     closed = state.get("closed") or []
@@ -289,6 +392,10 @@ def run_paper_tick(
     force_paper_only_env()
     now = now_et or datetime.now(ET)
     snap = snapshot or fetch()
+    try:
+        overlays = load_paper_overlays()
+    except Exception:
+        overlays = {"shadow_only": True, "veto": False}
     sleeves: dict[str, Any] = {}
 
     if run_lane_a:
@@ -304,7 +411,12 @@ def run_paper_tick(
     for path in paths:
         name = path.stem
         try:
-            sleeves[name] = {"ok": True, **run_pc_sleeve(rules_path=path, snapshot=snap, now_et=now)}
+            sleeves[name] = {
+                "ok": True,
+                **run_pc_sleeve(
+                    rules_path=path, snapshot=snap, now_et=now, overlays=overlays
+                ),
+            }
         except Exception as exc:
             sleeves[name] = {"ok": False, "error": str(exc)}
 
@@ -314,6 +426,7 @@ def run_paper_tick(
         "close": snap.close,
         "ma20": snap.ma20,
         "sleeves": sleeves,
+        "overlays": overlays,
         "live_untouched": True,
         "live_entries": os.environ.get("XSP_LANE_A_LIVE_ENTRIES"),
         "live_exits": os.environ.get("XSP_LANE_A_LIVE_EXITS"),

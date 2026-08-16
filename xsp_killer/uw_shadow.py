@@ -331,6 +331,49 @@ def build_gex_levels_summary(
         return None
 
 
+def build_market_tide_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Parse UW /market/market-tide. Log-only. Never vetoes."""
+    rows = (payload or {}).get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    last = rows[-1] if isinstance(rows[-1], dict) else None
+    if not last:
+        return None
+    call_p = _f(last.get("net_call_premium"))
+    put_p = _f(last.get("net_put_premium"))
+    net = call_p - put_p
+    if abs(net) < 1.0:
+        bias = "neutral"
+    elif net > 0:
+        bias = "call"
+    else:
+        bias = "put"
+    return {
+        "n": len(rows),
+        "timestamp": last.get("timestamp") or last.get("date"),
+        "net_call_premium": call_p,
+        "net_put_premium": put_p,
+        "bias": bias,
+        "shadow_only": True,
+        "veto": False,
+    }
+
+
+def fetch_market_tide_summary(provider: Any | None = None) -> dict[str, Any] | None:
+    if provider is None or not hasattr(provider, "_request"):
+        return None
+    try:
+        payload = provider._request(
+            "/market/market-tide",
+            cache_key="uw:market-tide",
+            cache_ttl=120,
+        )
+        return build_market_tide_summary(payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("uw_shadow market-tide fetch failed: %s", exc)
+        return None
+
+
 def build_monitor_uw_shadow(
     *,
     ticker: str = "SPY",
@@ -359,6 +402,7 @@ def build_monitor_uw_shadow(
             "net_prem": build_net_prem_summary(provider, ticker=ticker),
             "iv_rank": build_iv_rank_summary(provider, ticker=ticker),
             "gex_levels": build_gex_levels_summary(provider, ticker=ticker),
+            "market_tide": fetch_market_tide_summary(provider),
         }
         if _darkpool_enabled():
             out["darkpool"] = build_darkpool_summary(provider, ticker=ticker)

@@ -4,7 +4,7 @@
 
 ## Next action
 
-Nothing. Windows Task Scheduler runs `scripts/paper_tick.py` every 15 minutes plus 15:45/15:50/15:55 ET. See `briefs/2026-08-16_paper-autoloop.md`.
+Nothing. Autoloop is on. Each tick now logs TipSeeker king/floor/ceiling plus UW IV rank and market-tide (no veto). PC marks use UW/yfinance puts when the chain is up.
 
 ## What is papered locally
 

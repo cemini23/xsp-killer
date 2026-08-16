@@ -97,6 +97,10 @@ def test_paper_tick_keeps_going_if_one_sleeve_fails(tmp_path, monkeypatch):
         raise RuntimeError("lane_a_down")
 
     monkeypatch.setattr("xsp_killer.paper_autoloop._run_lane_a_paper", boom)
+    monkeypatch.setattr(
+        "xsp_killer.paper_autoloop.load_paper_overlays",
+        lambda: {"shadow_only": True, "veto": False},
+    )
     heartbeat = tmp_path / "paper-autoloop-latest.json"
     result = run_paper_tick(
         now_et=datetime(2026, 8, 16, 12, 0, tzinfo=ET),

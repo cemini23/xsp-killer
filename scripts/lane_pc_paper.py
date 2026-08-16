@@ -25,15 +25,17 @@ if str(ROOT) not in sys.path:
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
+from xsp_killer.paper_autoloop import (  # noqa: E402
+    SpySnapshot,
+    fetch_spy_snapshot,
+    run_pc_cycle,
+)
 from xsp_killer.put_credit_paper import (  # noqa: E402
     DEFAULT_LOG,
     DEFAULT_SCOREBOARD,
     DEFAULT_STATE,
     ET,
     PcRules,
-    append_log,
-    evaluate_pc_exits,
-    evaluate_pc_gates,
     load_state,
     replay_pc_daily,
     save_state,
@@ -41,68 +43,52 @@ from xsp_killer.put_credit_paper import (  # noqa: E402
 )
 
 
+def _snapshot(args: argparse.Namespace) -> SpySnapshot:
+    close = getattr(args, "close", None)
+    ma20 = getattr(args, "ma20", None)
+    if close is not None and ma20 is not None:
+        return SpySnapshot(
+            close=float(close),
+            ma20=float(ma20),
+            rv20=0.16,
+            asof=datetime.now(ET).date().isoformat(),
+            mark_value=getattr(args, "mark", None),
+        )
+    snap = fetch_spy_snapshot()
+    if getattr(args, "mark", None) is not None:
+        snap.mark_value = float(args.mark)
+    return snap
+
+
 def _cmd_entry(args: argparse.Namespace) -> int:
-    rules = PcRules.from_yaml()
-    now = datetime.now(ET)
-    # Live quote path is best-effort; on weekends/close we still log the gate.
-    close = args.close
-    ma20 = args.ma20
-    gate = evaluate_pc_gates(now_et=now, close=close, ma20=ma20, rules=rules)
-    row = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "event": "pc_entry" if gate.allowed else "pc_entry_skip",
-        "allowed": gate.allowed,
-        "reason": gate.reason,
-        "close": close,
-        "ma20": ma20,
-        "logic_version": "xsp_lane_pc_smb_v1",
-        "live_untouched": True,
-    }
-    append_log(row, Path(args.log) if args.log else DEFAULT_LOG)
-    print(json.dumps(row, indent=2))
-    return 0 if gate.allowed or gate.reason in (
-        "weekend",
-        "friday_no_entry",
-        "weekday_blocked",
-        "out_of_window",
-        "fomc_window",
-        "below_ma20",
-        "ma20_unavailable",
-    ) else 1
+    rules = PcRules.from_yaml(Path(args.rules) if args.rules else None)
+    state = load_state(Path(args.state) if args.state else DEFAULT_STATE)
+    snap = _snapshot(args)
+    row = run_pc_cycle(
+        rules=rules,
+        state=state,
+        snapshot=snap,
+        now_et=datetime.now(ET),
+        log_path=Path(args.log) if args.log else DEFAULT_LOG,
+    )
+    save_state(state, Path(args.state) if args.state else DEFAULT_STATE)
+    print(json.dumps(row, indent=2, default=str))
+    return 0
 
 
 def _cmd_monitor(args: argparse.Namespace) -> int:
-    rules = PcRules.from_yaml()
+    rules = PcRules.from_yaml(Path(args.rules) if getattr(args, "rules", None) else None)
     state = load_state(Path(args.state) if args.state else DEFAULT_STATE)
-    now = datetime.now(ET)
-    open_pos = state.get("paper_positions") or {}
-    if not open_pos:
-        print(json.dumps({"open": 0, "event": "pc_monitor_idle"}))
-        return 0
-    closed = state.setdefault("closed", [])
-    still = {}
-    for pid, pos in open_pos.items():
-        pos = dict(pos)
-        if args.mark is not None:
-            pos["mark_value"] = float(args.mark)
-        if args.above_ma20 is not None:
-            pos["above_ma20"] = bool(args.above_ma20)
-        held = int(pos.get("sessions_held") or 0)
-        reason = evaluate_pc_exits(pos, now_et=now, sessions_held=held, rules=rules)
-        if reason:
-            pos["status"] = "closed"
-            pos["exit_reason"] = reason
-            pos["exit_ts"] = datetime.now(timezone.utc).isoformat()
-            closed.append(pos)
-            append_log(
-                {"event": "pc_exit", "position": pos, "reason": reason},
-                Path(args.log) if args.log else DEFAULT_LOG,
-            )
-        else:
-            still[pid] = pos
-    state["paper_positions"] = still
+    snap = _snapshot(args)
+    row = run_pc_cycle(
+        rules=rules,
+        state=state,
+        snapshot=snap,
+        now_et=datetime.now(ET),
+        log_path=Path(args.log) if args.log else DEFAULT_LOG,
+    )
     save_state(state, Path(args.state) if args.state else DEFAULT_STATE)
-    print(json.dumps({"open": len(still), "closed_now": len(open_pos) - len(still)}))
+    print(json.dumps(row, indent=2, default=str))
     return 0
 
 
@@ -155,14 +141,19 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     e = sub.add_parser("entry")
-    e.add_argument("--close", type=float, required=True)
+    e.add_argument("--close", type=float, default=None)
     e.add_argument("--ma20", type=float, default=None)
+    e.add_argument("--rules", default=None)
+    e.add_argument("--state", default=None)
     e.add_argument("--log", default=None)
     e.set_defaults(func=_cmd_entry)
 
     m = sub.add_parser("monitor")
+    m.add_argument("--close", type=float, default=None)
+    m.add_argument("--ma20", type=float, default=None)
     m.add_argument("--mark", type=float, default=None)
     m.add_argument("--above-ma20", dest="above_ma20", type=int, default=None)
+    m.add_argument("--rules", default=None)
     m.add_argument("--state", default=None)
     m.add_argument("--log", default=None)
     m.set_defaults(func=_cmd_monitor)

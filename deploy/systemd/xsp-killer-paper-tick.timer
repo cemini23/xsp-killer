@@ -1,0 +1,15 @@
+[Unit]
+Description=XSP Killer paper tick — every 15m plus close-window extras
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* *:00:00 America/New_York
+OnCalendar=Mon..Fri *-*-* *:15:00 America/New_York
+OnCalendar=Mon..Fri *-*-* *:30:00 America/New_York
+OnCalendar=Mon..Fri *-*-* *:45:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 15:50:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 15:55:00 America/New_York
+Persistent=true
+RandomizedDelaySec=20
+
+[Install]
+WantedBy=timers.target

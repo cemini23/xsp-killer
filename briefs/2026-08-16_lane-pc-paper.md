@@ -4,8 +4,7 @@
 
 ## Next action
 
-Weekday 15:45 ET: `python scripts/lane_pc_paper.py entry --close <SPY> --ma20 <20DMA>`
-Until then the local book is the 10y replay scoreboard.
+Nothing. Windows Task Scheduler runs `scripts/paper_tick.py` every 15 minutes plus 15:45/15:50/15:55 ET. See `briefs/2026-08-16_paper-autoloop.md`.
 
 ## What is papered locally
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=XSP Killer — unattended paper tick (LIVE off)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/xsp-killer
+Environment=PYTHONPATH=/opt/xsp-killer
+Environment=XSP_LANE_A_RH_POLL=false
+Environment=XSP_LANE_A_RH_MCP=true
+Environment=XSP_LANE_A_LIVE_ENTRIES=false
+Environment=XSP_LANE_A_LIVE_EXITS=false
+Environment=XSP_LANE_A_PAPER_ENTRY=true
+EnvironmentFile=-/opt/xsp-killer/.env
+ExecStart=/opt/xsp-killer/scripts/paper_tick_cron.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

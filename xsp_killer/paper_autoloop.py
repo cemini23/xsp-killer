@@ -20,6 +20,7 @@ from xsp_killer.put_credit import (
     put_credit_value,
     select_long_put_strike,
 )
+from xsp_killer.overlay_skips import evaluate_overlay_skips
 from xsp_killer.tipseeker_shadow import load_latest_tipseeker
 from xsp_killer.uw_put_marks import PutCreditMarks, fetch_live_put_credit_marks
 from xsp_killer.put_credit_paper import (
@@ -194,6 +195,7 @@ def run_pc_cycle(
     overlays: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     log = log_path or DEFAULT_LOG
+    skip_shadow = evaluate_overlay_skips(overlays)
     open_pos = state.setdefault("paper_positions", {})
     closed = state.setdefault("closed", [])
     today = _today(now_et)
@@ -249,6 +251,7 @@ def run_pc_cycle(
                 "reason": reason,
                 "position": pos,
                 "overlays_veto": False,
+                "would_skip": skip_shadow,
             }
             append_log(exited, log)
         else:
@@ -264,6 +267,7 @@ def run_pc_cycle(
             "allowed": False,
             "reason": "already_open",
             "overlays_veto": False,
+            "would_skip": skip_shadow,
         }
         append_log(row, log)
         return row
@@ -279,6 +283,7 @@ def run_pc_cycle(
             "close": snapshot.close,
             "ma20": snapshot.ma20,
             "overlays_veto": False,
+            "would_skip": skip_shadow,
         }
         append_log(row, log)
         return row
@@ -301,6 +306,7 @@ def run_pc_cycle(
         "live_untouched": True,
         "overlays_veto": False,
         "overlays": overlays,
+        "would_skip": skip_shadow,
     }
     append_log(row, log)
     return row
@@ -337,20 +343,21 @@ def run_pc_sleeve(
         overlays=overlays,
     )
     save_state(state, state_path)
-    closed = state.get("closed") or []
-    if closed:
-        wins = sum(1 for t in closed if (t.get("pnl_usd") or 0) > 0)
-        n = len(closed)
-        write_scoreboard(
-            {
-                "n_entries": n,
-                "win_pct": round(100.0 * wins / n, 2) if n else None,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "live_untouched": True,
-                "last_event": out.get("event"),
-            },
-            score_path,
-        )
+    prev: dict[str, Any] = {}
+    if score_path.is_file():
+        try:
+            prev = json.loads(score_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            prev = {}
+    prev.update(
+        {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "live_untouched": True,
+            "last_event": out.get("event"),
+            "would_skip": out.get("would_skip"),
+        }
+    )
+    write_scoreboard(prev, score_path)
     return out
 
 
@@ -427,6 +434,7 @@ def run_paper_tick(
         "ma20": snap.ma20,
         "sleeves": sleeves,
         "overlays": overlays,
+        "would_skip": evaluate_overlay_skips(overlays),
         "live_untouched": True,
         "live_entries": os.environ.get("XSP_LANE_A_LIVE_ENTRIES"),
         "live_exits": os.environ.get("XSP_LANE_A_LIVE_EXITS"),

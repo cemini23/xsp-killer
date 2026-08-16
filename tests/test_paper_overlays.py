@@ -47,6 +47,8 @@ def test_paper_tick_attaches_overlays_without_veto(tmp_path, monkeypatch):
     )
     assert result["overlays"]["tipseeker"]["tickers"]["SPY"]["king_strike"] == 775.0
     assert result["overlays"]["veto"] is False
+    assert result["would_skip"]["would_skip"] is False
+    assert result["would_skip"]["veto"] is False
     assert result["live_untouched"] is True
 
 

@@ -12,6 +12,8 @@ logs/*.jsonl
 logs/health_soak_*.md
 briefs/*-latest.json
 briefs/lane-a-state.json
+briefs/lane-pc-state.json
+briefs/lane-pc-scoreboard.json
 reports/gap-audit/
 !.gitkeep
 *.egg-info/

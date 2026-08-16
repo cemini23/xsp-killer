@@ -1,0 +1,34 @@
+# Isolated paper sleeve — SMB 20-DMA put credit (K79) + FOMC skip.
+# Log-only. Never places multi-leg. Does not share Lane A state or LIVE_*.
+lane: PC
+instrument: XSP
+option_type: put
+structure: put_credit
+live_untouched: true
+
+entry:
+  window_start_et: "15:45"
+  window_end_et: "16:00"
+  dte_target: 14
+  width_strikes: 1
+  require_above_ma20: true
+  ma_period: 20
+  skip_fomc: true
+  require_window: true
+
+exit:
+  velocity_pct: 0.76
+  max_hold_sessions: 5
+  friday_flatten_enabled: true
+  friday_flatten_et: "15:45"
+
+paper_entry:
+  enabled: true
+  quantity: 1
+  max_open_positions: 1
+
+logging:
+  logic_version: xsp_lane_pc_smb_v1
+  log_path: logs/lane_pc_paper.jsonl
+  state_path: briefs/lane-pc-state.json
+  scoreboard_path: briefs/lane-pc-scoreboard.json

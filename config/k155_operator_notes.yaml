@@ -1098,3 +1098,66 @@ k236:
     not_auto_live_collar_strategy: true
     playbook_snapshot_gates_unchanged: true
     note: "Honors brief: venue/retail-flow context only; no strategy code; website traffic not a trade signal; GREEN playbook_snapshot gates unchanged; weather notes only"
+
+# K240 — Glitch SPX Talon HITL + Moontower RSSB corr awareness (log-only; extends K236).
+k240:
+  version: "2026-08-17"
+  glitchspx_talon_hitl:
+    flag: talon_weekly_sector_map_hitl_awareness
+    weeklies_aug10_14_and_aug17_21_context: true
+    broad_bullish_conditional: true
+    week2_avg_snapshot_move_0_57pct_context: true
+    qqq_spxw_watchlist_not_chase: true
+    ote_break_hold_retest_framing: true
+    aggressiveness_from_qqq_spxw_sqqq_vxx_soxx_rut: true
+    theme_clusters_map_not_buy_list: true
+    no_lane_a_single_name_screen_rewrite: true
+    prototyping_ai_analyst_skylit_caveat: true
+    operator_hypothesis_required_before_lane_change: true
+    hitl_only: true
+    no_auto_arm: true
+    note: "Glitch SPX Talon weeklies Aug 10–14 / Aug 17–21: HITL sector map not directive; broad-bullish but conditional (week2 avg snapshot +0.57%; QQQ/SPXW watchlist not chase); OTE / break-hold-retest; aggressiveness from QQQ/SPXW/SQQQ/VXX/SOXX/RUT; theme clusters (memory/quantum/semis/AI infra/fintech/miners) = map not buy list; do not rewrite Lane A screens; skylit.ai prototyping AI caveat — operator hypothesis required; HITL only; no auto-arm"
+  moontower_rssb_corr_awareness:
+    flag: rssb_implied_stock_bond_corr_readout_awareness
+    back_out_implied_corr_from_rssb_iv: true
+    risk_parity_structurally_short_that_corr: true
+    realized_vti_ief_30d_corr_0_43_context: true
+    fisher_z_ci_wide_at_n22: true
+    ci_95_approx_0_02_to_0_72_context: true
+    do_not_treat_point_estimate_as_watch_level: true
+    prefer_1y_ci_over_30d_point: true
+    awareness_only: true
+    note: "Moontower RSSB options: implied stock-bond corr from RSSB IV given leg vols; risk-parity books structurally short that corr; realized VTI/IEF 30d +0.43 with wide Fisher-z 95% CI ~[+0.02,+0.72] at N=22 — do not arm a watch level from the point estimate; prefer 1Y CI; awareness only"
+  hitl_watch_policy:
+    flag: no_auto_arm_watches_json
+    no_auto_arm_watches_json: true
+    vivo_not_watch_unless_operator_names_symbol_op_level: true
+    phase1_operator_read_only: true
+    optional_hitl_watch_only_if_named_level_later: true
+    note: "No auto-arm of watches.json; VIVO is not a watch unless operator names symbol + op + level; Phase 1 = operator read; optional HITL watch only if a named level appears later"
+  lane_a_overnight:
+    keep_tight_vs_k236: true
+    no_posture_change_on_teaser: true
+    note: "Keep overnight tight vs K236 WuBlock website-traffic stack; no posture change on Talon/RSSB awareness alone"
+  constraints:
+    no_integral_solver: true
+    no_strategy_code: true
+    no_diffusion_vendor: true
+    no_cf_workers_vendor: true
+    no_live_auto_calibrator: true
+    no_neural_operator_serving: true
+    no_live_pricer_wire: true
+    no_tabular_llm_prediction: true
+    no_prod_manip_detector: true
+    no_auto_lane_size_change: true
+    no_auto_watches_json_writes: true
+    no_order_bots: true
+    no_lane_retune_on_paper_forecasts: true
+    no_auto_hl_perp_size_change: true
+    no_auto_place_collars: true
+    not_auto_live_collar_strategy: true
+    no_auto_arm: true
+    no_lane_a_screen_rewrite_from_talon: true
+    hitl_only: true
+    playbook_snapshot_gates_unchanged: true
+    note: "Honors brief: HITL awareness only; no code; no auto-arm watches.json; no Lane A screen rewrite from Talon; no RSSB point-estimate watch level; GREEN playbook_snapshot gates unchanged; weather notes only"

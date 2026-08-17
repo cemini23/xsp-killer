@@ -196,6 +196,11 @@ def load_k236_notes(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml_block(path or DEFAULT_K155_NOTES, "k236")
 
 
+def load_k240_notes(path: Path | None = None) -> dict[str, Any]:
+    """Load K240 Glitch SPX Talon HITL + Moontower RSSB corr awareness notes (log-only)."""
+    return _load_yaml_block(path or DEFAULT_K155_NOTES, "k240")
+
+
 def build_macro_weather_extras(
     *,
     usdjpy: float | None,
@@ -271,9 +276,10 @@ def build_monitor_macro_weather_extras(
     k233_notes: dict[str, Any] | None = None,
     k234_notes: dict[str, Any] | None = None,
     k236_notes: dict[str, Any] | None = None,
+    k240_notes: dict[str, Any] | None = None,
     notes_path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Merge K155..K236 + glitch_falcon YAML notes for monitor attachment."""
+    """Merge K155..K240 + glitch_falcon YAML notes for monitor attachment."""
     path = notes_path or DEFAULT_K155_NOTES
     k155 = notes if notes is not None else load_k155_notes(path)
     if not k155:
@@ -317,6 +323,7 @@ def build_monitor_macro_weather_extras(
     k233 = k233_notes if k233_notes is not None else load_k233_notes(path)
     k234 = k234_notes if k234_notes is not None else load_k234_notes(path)
     k236 = k236_notes if k236_notes is not None else load_k236_notes(path)
+    k240 = k240_notes if k240_notes is not None else load_k240_notes(path)
 
     sofr = k155.get("sofr_curve")
     sofr_note = sofr.get("note") if isinstance(sofr, dict) else None
@@ -728,6 +735,18 @@ def build_monitor_macro_weather_extras(
         ):
             if key in k236:
                 extras[key] = k236[key]
+
+    if k240:
+        extras["k240_version"] = k240.get("version")
+        for key in (
+            "glitchspx_talon_hitl",
+            "moontower_rssb_corr_awareness",
+            "hitl_watch_policy",
+            "lane_a_overnight",
+            "constraints",
+        ):
+            if key in k240:
+                extras[key] = k240[key]
 
     return extras
 

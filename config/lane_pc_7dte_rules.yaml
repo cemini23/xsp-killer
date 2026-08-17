@@ -27,6 +27,7 @@ paper_entry:
   enabled: true
   quantity: 1
   max_open_positions: 1
+  one_entry_per_day: true
 
 logging:
   logic_version: xsp_lane_pc_7dte_v1

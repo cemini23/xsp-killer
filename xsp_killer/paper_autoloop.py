@@ -22,7 +22,7 @@ from xsp_killer.put_credit import (
 )
 from xsp_killer.overlay_skips import evaluate_overlay_skips
 from xsp_killer.tipseeker_shadow import load_latest_tipseeker
-from xsp_killer.uw_put_marks import PutCreditMarks, fetch_live_put_credit_marks
+from xsp_killer.uw_put_marks import PutCreditMarks, accept_mark_value, fetch_live_put_credit_marks
 from xsp_killer.put_credit_paper import (
     DEFAULT_LOG,
     DEFAULT_RULES,
@@ -33,7 +33,9 @@ from xsp_killer.put_credit_paper import (
     _atm,
     _bs_put,
     _spread_mark,
+    already_entered_today,
     append_log,
+    attach_pc_exit_pnl,
     evaluate_pc_exits,
     evaluate_pc_gates,
     load_state,
@@ -206,12 +208,15 @@ def run_pc_cycle(
         pos = dict(pos)
         held = _bump_sessions(pos, today)
         pos["above_ma20"] = snapshot.close > snapshot.ma20
+        last_mark = float(pos.get("mark_value") or pos.get("entry_credit") or 0.0)
+        entry_credit = float(pos.get("entry_credit") or 0.0)
+        width = float(pos.get("width_points") or rules.width_strikes * STRIKE_STEP)
+        dte_left = max(0, int(pos.get("dte") or rules.dte) - held)
+        pos["dte_left"] = dte_left
         if snapshot.mark_value is not None:
             pos["mark_value"] = float(snapshot.mark_value)
         else:
-            width = float(pos.get("width_points") or rules.width_strikes * STRIKE_STEP)
-            dte_left = max(0, int(pos.get("dte") or rules.dte) - held)
-            used_live = False
+            applied_live = False
             if live_marks:
                 fn = mark_fn or fetch_live_put_credit_marks
                 try:
@@ -224,27 +229,46 @@ def run_pc_cycle(
                 except Exception:
                     marks = None
                 if marks is not None:
-                    pos["mark_value"] = put_credit_value(
+                    raw = put_credit_value(
                         short_mark=marks.short_mid,
                         long_mark=marks.long_mid,
                         width=width,
                     )
-                    pos["pricing_fidelity"] = marks.source
-                    used_live = True
-            if not used_live:
-                pos["mark_value"] = _spread_mark(
-                    snapshot.close,
-                    float(pos["short_strike"]),
-                    float(pos["long_strike"]),
-                    dte_left,
-                    float(pos.get("iv") or snapshot.rv20),
-                    width,
-                )
+                    accepted = accept_mark_value(
+                        entry=entry_credit,
+                        last=last_mark,
+                        new=raw,
+                        dte_left=dte_left,
+                        sessions_held=held,
+                        velocity_pct=rules.velocity_pct,
+                    )
+                    if accepted == raw:
+                        pos["mark_value"] = accepted
+                        pos["pricing_fidelity"] = marks.source
+                        pos.pop("rejected_live_mark", None)
+                        applied_live = True
+                    else:
+                        pos["rejected_live_mark"] = raw
+                        pos["mark_value"] = last_mark if last_mark > 0 else accepted
+                        applied_live = last_mark > 0
+            if not applied_live:
+                if last_mark > 0:
+                    pos["mark_value"] = last_mark
+                else:
+                    pos["mark_value"] = _spread_mark(
+                        snapshot.close,
+                        float(pos["short_strike"]),
+                        float(pos["long_strike"]),
+                        dte_left,
+                        float(pos.get("iv") or snapshot.rv20),
+                        width,
+                    )
         reason = evaluate_pc_exits(pos, now_et=now_et, sessions_held=held, rules=rules)
         if reason:
             pos["status"] = "closed"
             pos["exit_reason"] = reason
             pos["exit_ts"] = datetime.now(timezone.utc).isoformat()
+            attach_pc_exit_pnl(pos, rules)
             closed.append(pos)
             exited = {
                 "event": "pc_exit",
@@ -288,6 +312,19 @@ def run_pc_cycle(
         append_log(row, log)
         return row
 
+    if rules.one_entry_per_day and already_entered_today(state, today):
+        row = {
+            "event": "pc_entry_skip",
+            "allowed": False,
+            "reason": "already_entered_today",
+            "close": snapshot.close,
+            "ma20": snapshot.ma20,
+            "overlays_veto": False,
+            "would_skip": skip_shadow,
+        }
+        append_log(row, log)
+        return row
+
     pos = _open_pc_position(
         rules=rules,
         snapshot=snapshot,
@@ -296,6 +333,7 @@ def run_pc_cycle(
         mark_fn=mark_fn,
     )
     state["paper_positions"][pos["position_id"]] = pos
+    state["last_entry_date"] = pos["entry_date"]
     row = {
         "event": "pc_entry",
         "allowed": True,
@@ -355,6 +393,13 @@ def run_pc_sleeve(
             "live_untouched": True,
             "last_event": out.get("event"),
             "would_skip": out.get("would_skip"),
+            "last_entry_date": state.get("last_entry_date"),
+            "void_n": sum(1 for t in state.get("closed") or [] if t.get("void")),
+            "live_closed_n": sum(
+                1
+                for t in state.get("closed") or []
+                if t.get("position_id") and not t.get("void")
+            ),
         }
     )
     write_scoreboard(prev, score_path)

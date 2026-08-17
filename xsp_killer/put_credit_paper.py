@@ -39,6 +39,7 @@ DEFAULT_LOG = ROOT / "logs" / "lane_pc_paper.jsonl"
 DEFAULT_SCOREBOARD = ROOT / "briefs" / "lane-pc-scoreboard.json"
 STRIKE_STEP = 5.0
 R = 0.05
+MIN_VELOCITY_MARK = 0.05
 
 
 @dataclass
@@ -55,12 +56,14 @@ class PcRules:
     require_window: bool = True
     ma_period: int = 20
     entry_weekdays: tuple[int, ...] = (0, 1, 2, 3)
+    one_entry_per_day: bool = True
 
     @classmethod
     def from_yaml(cls, path: Path | None = None) -> PcRules:
         data = yaml.safe_load((path or DEFAULT_RULES).read_text(encoding="utf-8")) or {}
         entry = data.get("entry") or {}
         exit_cfg = data.get("exit") or {}
+        paper = data.get("paper_entry") or {}
 
         def _t(raw: str, default: time) -> time:
             if not raw:
@@ -84,6 +87,7 @@ class PcRules:
             require_window=bool(entry.get("require_window", True)),
             ma_period=int(entry.get("ma_period", 20)),
             entry_weekdays=days,
+            one_entry_per_day=bool(paper.get("one_entry_per_day", True)),
         )
 
 
@@ -124,6 +128,53 @@ def evaluate_pc_gates(
     return GateResult(True, None)
 
 
+def already_entered_today(state: dict[str, Any], today: date) -> bool:
+    iso = today.isoformat()
+    if state.get("last_entry_date") == iso:
+        return True
+    for pos in (state.get("paper_positions") or {}).values():
+        if pos.get("entry_date") == iso:
+            return True
+    for row in state.get("closed") or []:
+        if row.get("entry_date") == iso:
+            return True
+    return False
+
+
+def pc_paper_econ() -> PaperEconomics:
+    return PaperEconomics(
+        commission_usd_per_contract=0.65,
+        slippage_pct_of_premium=0.005,
+        slippage_usd_per_share=0.12,
+        slippage_max_pct_of_premium=0.015,
+        premium_scale=1.0,
+    )
+
+
+def attach_pc_exit_pnl(pos: dict[str, Any], rules: PcRules) -> dict[str, Any]:
+    econ = pc_paper_econ()
+    credit = float(pos["entry_credit"])
+    mark = float(pos["mark_value"])
+    width = float(pos.get("width_points") or rules.width_strikes * STRIKE_STEP)
+    fill_in = entry_fill_premium(credit, econ)
+    fill_out = exit_fill_premium(mark, econ)
+    pnl_pts = fill_in - fill_out
+    max_risk = width - credit
+    pos["exit_value"] = mark
+    pos["pnl_usd"] = round(pnl_pts * 100.0, 2)
+    pos["roc_risk"] = round(pnl_pts / max_risk, 6) if max_risk > 0 else None
+    return pos
+
+
+def _dte_left(pos: dict[str, Any], sessions_held: int) -> int:
+    if pos.get("dte_left") is not None:
+        return max(0, int(pos["dte_left"]))
+    dte = pos.get("dte")
+    if dte is not None:
+        return max(0, int(dte) - int(sessions_held))
+    return 1
+
+
 def evaluate_pc_exits(
     pos: dict[str, Any],
     *,
@@ -134,8 +185,13 @@ def evaluate_pc_exits(
     now = now_et.astimezone(ET) if now_et.tzinfo else now_et.replace(tzinfo=ET)
     credit = float(pos["entry_credit"])
     mark = float(pos["mark_value"])
-    if credit > 0 and velocity_captured(entry_credit=credit, current_value=mark) >= (
-        rules.velocity_pct
+    dte_left = _dte_left(pos, sessions_held)
+    stale_zero = dte_left > 0 and mark < MIN_VELOCITY_MARK
+    if (
+        not stale_zero
+        and credit > 0
+        and velocity_captured(entry_credit=credit, current_value=mark)
+        >= rules.velocity_pct
     ):
         return "velocity_76"
     if not bool(pos.get("above_ma20", True)):

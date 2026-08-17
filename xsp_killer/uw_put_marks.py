@@ -13,6 +13,12 @@ from typing import Any, Callable
 import pandas as pd
 
 
+MAX_STRIKE_DIFF = 1.01
+MIN_LIVE_MID = 0.0
+MIN_LIVE_VALUE = 0.05
+MAX_JUMP_PCT = 0.40
+
+
 @dataclass
 class PutCreditMarks:
     short_mid: float
@@ -44,11 +50,56 @@ def _mid(row: pd.Series) -> float | None:
     return None
 
 
+def _nearest_put_row(
+    puts: pd.DataFrame, strike: float, *, max_diff: float = MAX_STRIKE_DIFF
+) -> pd.Series | None:
+    if puts is None or puts.empty or "strike" not in puts.columns:
+        return None
+    idx = (puts["strike"].astype(float) - float(strike)).abs().idxmin()
+    row = puts.loc[idx]
+    matched = float(row["strike"])
+    if abs(matched - float(strike)) > max_diff:
+        return None
+    return row
+
+
 def put_mid_from_chain(puts: pd.DataFrame, strike: float) -> float | None:
     if puts is None or puts.empty or "strike" not in puts.columns:
         return None
     idx = (puts["strike"].astype(float) - float(strike)).abs().idxmin()
     return _mid(puts.loc[idx])
+
+
+def accept_mark_value(
+    *,
+    entry: float,
+    last: float | None,
+    new: float | None,
+    dte_left: int,
+    sessions_held: int,
+    velocity_pct: float = 0.76,
+    min_live: float = MIN_LIVE_VALUE,
+    max_jump: float = MAX_JUMP_PCT,
+) -> float:
+    """Keep last/entry when a live print is zero, inverted, or a same-session fake velocity."""
+    fallback = float(last) if last is not None and float(last) > 0 else float(entry or 0.0)
+    if new is None:
+        return fallback
+    try:
+        new_f = float(new)
+    except (TypeError, ValueError):
+        return fallback
+    if int(dte_left) > 0 and new_f <= min_live:
+        return fallback
+    if fallback > 0 and abs(new_f - fallback) / fallback > max_jump:
+        return fallback
+    if (
+        int(sessions_held) == 0
+        and float(entry) > 0
+        and (float(entry) - new_f) / float(entry) >= float(velocity_pct)
+    ):
+        return fallback
+    return new_f
 
 
 def pick_expiry(*, dte: int, today: date, expirations: list[str]) -> str | None:
@@ -74,14 +125,23 @@ def pick_expiry(*, dte: int, today: date, expirations: list[str]) -> str | None:
 def _marks_from_puts(
     puts: pd.DataFrame, short_k: float, long_k: float, expiration: str, source: str
 ) -> PutCreditMarks | None:
-    short_mid = put_mid_from_chain(puts, short_k)
-    long_mid = put_mid_from_chain(puts, long_k)
+    short_row = _nearest_put_row(puts, short_k)
+    long_row = _nearest_put_row(puts, long_k)
+    if short_row is None or long_row is None:
+        return None
+    short_mid = _mid(short_row)
+    long_mid = _mid(long_row)
     if short_mid is None or long_mid is None:
+        return None
+    if short_mid <= MIN_LIVE_MID or long_mid <= MIN_LIVE_MID:
+        return None
+    net = round(short_mid - long_mid, 4)
+    if net <= 0:
         return None
     return PutCreditMarks(
         short_mid=short_mid,
         long_mid=long_mid,
-        net_credit=round(short_mid - long_mid, 4),
+        net_credit=net,
         expiration=expiration,
         source=source,
         stale=False,

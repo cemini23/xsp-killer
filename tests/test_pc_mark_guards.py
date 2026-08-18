@@ -180,6 +180,9 @@ def test_valid_uw_mark_updates_hold(tmp_path):
     assert out["event"] == "pc_hold"
     assert state["paper_positions"]["pc-1"]["mark_value"] == 1.8
     assert state["paper_positions"]["pc-1"]["pricing_fidelity"] == "uw_spy_put"
+
+
+def test_velocity_exit_writes_pnl(tmp_path):
     state = {
         "paper_positions": {
             "pc-1": {
@@ -209,3 +212,54 @@ def test_valid_uw_mark_updates_hold(tmp_path):
     assert out["event"] == "pc_exit"
     assert state["closed"][0]["pnl_usd"] is not None
     assert state["closed"][0]["pnl_usd"] > 0
+
+
+def test_nan_close_does_not_dma_exit(tmp_path):
+    state = {
+        "paper_positions": {
+            "pc-2026-08-17-775": {
+                "position_id": "pc-2026-08-17-775",
+                "entry_credit": 1.975,
+                "width_points": 5.0,
+                "entry_date": "2026-08-17",
+                "short_strike": 775.0,
+                "long_strike": 770.0,
+                "mark_value": 2.075,
+                "above_ma20": True,
+                "sessions_held": 0,
+                "last_monitor_date": "2026-08-17",
+                "dte": 7,
+                "iv": 0.13,
+            }
+        },
+        "closed": [],
+        "last_entry_date": "2026-08-17",
+    }
+    out = run_pc_cycle(
+        rules=PcRules(require_window=False),
+        state=state,
+        snapshot=SpySnapshot(close=float("nan"), ma20=756.94, rv20=0.13, asof="2026-08-17"),
+        now_et=datetime(2026, 8, 18, 0, 4, tzinfo=ET),
+        log_path=tmp_path / "pc.jsonl",
+    )
+    assert out["event"] == "pc_hold"
+    pos = state["paper_positions"]["pc-2026-08-17-775"]
+    assert pos["above_ma20"] is True
+    assert pos["sessions_held"] == 0
+    assert state["closed"] == []
+
+
+def test_finite_history_drops_nan_last_bar():
+    import math
+
+    import pandas as pd
+
+    from xsp_killer.paper_autoloop import _finite_daily_history
+
+    idx = pd.bdate_range("2026-07-20", periods=22)
+    closes = list(range(750, 772))
+    hist = pd.DataFrame({"Close": closes}, index=idx)
+    hist.loc[hist.index[-1], "Close"] = float("nan")
+    work = _finite_daily_history(hist, ma_period=20)
+    assert math.isfinite(float(work["Close"].iloc[-1]))
+    assert len(work) == 21

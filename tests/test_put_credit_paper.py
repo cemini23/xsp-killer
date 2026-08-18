@@ -57,6 +57,15 @@ def test_gates_skip_friday_and_fomc_and_below_ma():
     assert g.allowed is False
     assert g.reason == "weekday_blocked"
 
+    nan_close = evaluate_pc_gates(
+        now_et=ok,
+        close=float("nan"),
+        ma20=590.0,
+        rules=PcRules(require_window=False),
+    )
+    assert nan_close.allowed is False
+    assert nan_close.reason == "spot_unavailable"
+
 
 def test_exits_velocity_dma_friday():
     rules = PcRules(velocity_pct=0.76, max_hold_sessions=5)

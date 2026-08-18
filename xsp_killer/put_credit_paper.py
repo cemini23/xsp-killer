@@ -120,6 +120,8 @@ def evaluate_pc_gates(
             return GateResult(False, "out_of_window")
     if rules.skip_fomc and near_fomc(now.date(), before=2, after=1):
         return GateResult(False, "fomc_window")
+    if not math.isfinite(float(close)):
+        return GateResult(False, "spot_unavailable")
     if rules.require_above_ma20:
         if ma20 is None or not math.isfinite(float(ma20)):
             return GateResult(False, "ma20_unavailable")

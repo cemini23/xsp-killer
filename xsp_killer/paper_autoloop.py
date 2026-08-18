@@ -93,13 +93,24 @@ def force_paper_only_env() -> None:
     os.environ["XSP_LANE_A_PAPER_ENTRY"] = "true"
 
 
-def fetch_spy_snapshot(ma_period: int = 20) -> SpySnapshot:
+def _finite_daily_history(hist, ma_period: int):
+    """Drop incomplete overnight bars so NaN close cannot look like a DMA break."""
     import pandas as pd
+
+    if hist is None or hist.empty:
+        raise RuntimeError("spy_history_unavailable")
+    close = pd.to_numeric(hist["Close"], errors="coerce")
+    work = hist.loc[close.map(lambda x: bool(math.isfinite(float(x))) if pd.notna(x) else False)]
+    if work.empty or len(work) < ma_period:
+        raise RuntimeError("spy_history_unavailable")
+    return work
+
+
+def fetch_spy_snapshot(ma_period: int = 20) -> SpySnapshot:
     import yfinance as yf
 
     hist = yf.Ticker("SPY").history(period="3mo", interval="1d", timeout=15)
-    if hist is None or hist.empty or len(hist) < ma_period:
-        raise RuntimeError("spy_history_unavailable")
+    hist = _finite_daily_history(hist, ma_period)
     close = float(hist["Close"].iloc[-1])
     ma20 = float(hist["Close"].tail(ma_period).mean())
     rets = hist["Close"].pct_change()
@@ -114,6 +125,20 @@ def fetch_spy_snapshot(ma_period: int = 20) -> SpySnapshot:
 def _today(now_et: datetime) -> date:
     now = now_et.astimezone(ET) if now_et.tzinfo else now_et.replace(tzinfo=ET)
     return now.date()
+
+
+def _spot_ok(snapshot: SpySnapshot) -> bool:
+    try:
+        return math.isfinite(float(snapshot.close)) and math.isfinite(float(snapshot.ma20))
+    except (TypeError, ValueError):
+        return False
+
+
+def _session_day(snapshot: SpySnapshot, now_et: datetime) -> date:
+    try:
+        return date.fromisoformat(str(snapshot.asof)[:10])
+    except ValueError:
+        return _today(now_et)
 
 
 def _bump_sessions(pos: dict[str, Any], today: date) -> int:
@@ -201,13 +226,18 @@ def run_pc_cycle(
     open_pos = state.setdefault("paper_positions", {})
     closed = state.setdefault("closed", [])
     today = _today(now_et)
+    spot_ok = _spot_ok(snapshot)
+    session_day = _session_day(snapshot, now_et) if spot_ok else today
 
     still: dict[str, Any] = {}
     exited: dict[str, Any] | None = None
     for pid, pos in list(open_pos.items()):
         pos = dict(pos)
-        held = _bump_sessions(pos, today)
-        pos["above_ma20"] = snapshot.close > snapshot.ma20
+        if spot_ok:
+            held = _bump_sessions(pos, session_day)
+            pos["above_ma20"] = snapshot.close > snapshot.ma20
+        else:
+            held = int(pos.get("sessions_held") or 0)
         last_mark = float(pos.get("mark_value") or pos.get("entry_credit") or 0.0)
         entry_credit = float(pos.get("entry_credit") or 0.0)
         width = float(pos.get("width_points") or rules.width_strikes * STRIKE_STEP)
